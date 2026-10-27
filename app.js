@@ -8,6 +8,9 @@
 const GOOGLE_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1U6qpwnVtTDf-K7OpwNWtI-seN7bN2GaDwfYT2m2SL60/edit?usp=sharing";
 const GOOGLE_SPREADSHEET_ID = "1U6qpwnVtTDf-K7OpwNWtI-seN7bN2GaDwfYT2m2SL60";
 
+// رابط Google Apps Script Web App المعتمد للمزامنة التلقائية
+const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec";
+
 const USERS = {
   postgrad: {
     username: 'postgrad',
@@ -31,56 +34,7 @@ let currentSelectedRole = 'postgrad';
 // ==========================================
 // 2. حالة البيانات الأولية والطلبة (Initial State)
 // ==========================================
-const DEFAULT_STUDENTS = [
-  {
-    id: 'STU-2024-001',
-    fullName: 'حيدر علي جاسم الكناني',
-    expenseType: 'نفقة خاصة',
-    department: 'علوم الحاسوب',
-    studyType: 'ماجستير',
-    specialization: 'الذكاء الاصطناعي وتعلم الآلة',
-    admissionYear: '2023 - 2024',
-    graduationYear: '2025 - 2026',
-    isPaid: true,
-    paymentAmount: '1500000',
-    paymentDate: '2024-10-15',
-    auditorName: 'أ. مروان فالح حسن',
-    createdAt: '2024-10-10 10:30',
-    receiptImage: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="100%" height="100%" fill="%23f8fafc"/><rect x="20" y="20" width="360" height="210" rx="10" fill="none" stroke="%234f46e5" stroke-width="2" stroke-dasharray="6,6"/><text x="50%" y="40%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="16" fill="%231e293b" font-weight="bold">وصل قبض مالي رسمي رقم #98231</text><text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%230d9488">المبلغ: 1,500,000 دينار عراقي</text><text x="50%" y="75%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">تاريخ التسديد: 2024-10-15 | التدقيق: معتمد</text></svg>'
-  },
-  {
-    id: 'STU-2024-002',
-    fullName: 'فاطمة محمد باقر الزبيدي',
-    expenseType: 'نفقة خاصة',
-    department: 'الهندسة المدنية',
-    studyType: 'دكتوراه',
-    specialization: 'هندسة الإنشاءات والجسور',
-    admissionYear: '2023 - 2024',
-    graduationYear: '2026 - 2027',
-    isPaid: false,
-    paymentAmount: '',
-    paymentDate: '',
-    auditorName: '',
-    createdAt: '2024-10-22 14:15',
-    receiptImage: null
-  },
-  {
-    id: 'STU-2024-003',
-    fullName: 'كرار عبد الرضا مهدي العامري',
-    expenseType: 'نفقة عامة',
-    department: 'إدارة الأعمال',
-    studyType: 'ماجستير - مسائي',
-    specialization: 'إدارة العمليات وسلاسل الإمداد',
-    admissionYear: '2024 - 2025',
-    graduationYear: '2026 - 2027',
-    isPaid: true,
-    paymentAmount: '750000',
-    paymentDate: '2024-10-25',
-    auditorName: 'م.م زينب حامد قاسم',
-    createdAt: '2024-10-20 09:00',
-    receiptImage: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="100%" height="100%" fill="%23f8fafc"/><rect x="20" y="20" width="360" height="210" rx="10" fill="none" stroke="%230d9488" stroke-width="2"/><text x="50%" y="40%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="16" fill="%231e293b" font-weight="bold">وصل أمانات دراسات عليا #98450</text><text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%234f46e5">المبلغ: 750,000 دينار عراقي</text><text x="50%" y="75%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%2364748b">تاريخ التسديد: 2024-10-25</text></svg>'
-  }
-];
+const DEFAULT_STUDENTS = [];
 
 let studentsList = [];
 let selectedStudentForAccounts = null;
@@ -90,7 +44,16 @@ let currentReceiptBase64 = null;
 // 3. تهيئة النظام والبدء (Initialization)
 // ==========================================
 window.addEventListener('DOMContentLoaded', () => {
-  // تحميل الطلبة من التخزين المحلي أو البيانات الافتراضية
+  // التأكد من ضبط رابط Google Apps Script Web App الصحيح
+  const savedSheetUrl = localStorage.getItem('google_sheet_webhook_url');
+  if (!savedSheetUrl || !savedSheetUrl.startsWith('https://script.google.com/macros/s/')) {
+    localStorage.setItem('google_sheet_webhook_url', GOOGLE_SCRIPT_WEBHOOK);
+  }
+  if (document.getElementById('inpGoogleSheetUrl')) {
+    document.getElementById('inpGoogleSheetUrl').value = GOOGLE_SCRIPT_WEBHOOK;
+  }
+
+  // تحميل الطلبة من التخزين المحلي
   loadStudents();
   
   // تهيئة الأيقونات
@@ -115,12 +78,6 @@ window.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('postgrad_current_user');
     }
   }
-
-  // تحميل رابط Google Sheet المحفوظ إن وجد
-  const savedSheetUrl = localStorage.getItem('google_sheet_webhook_url');
-  if (savedSheetUrl && document.getElementById('inpGoogleSheetUrl')) {
-    document.getElementById('inpGoogleSheetUrl').value = savedSheetUrl;
-  }
 });
 
 function loadStudents() {
@@ -129,10 +86,10 @@ function loadStudents() {
     try {
       studentsList = JSON.parse(saved);
     } catch (e) {
-      studentsList = [...DEFAULT_STUDENTS];
+      studentsList = [];
     }
   } else {
-    studentsList = [...DEFAULT_STUDENTS];
+    studentsList = [];
     saveStudents();
   }
   updateStats();
@@ -843,12 +800,16 @@ function saveGoogleSheetSettings() {
   closeGoogleSheetModal();
 }
 
-async function syncStudentToGoogleSheet(student) {
-  const webhookUrl = localStorage.getItem('google_sheet_webhook_url');
-  if (!webhookUrl) {
-    console.log('ملاحظة: لم يتم ضبط رابط Google Sheet بعد. يمكنك ضبطه من زر Google Sheet في الأعلى.');
-    return;
+function getActiveWebhookUrl() {
+  const saved = localStorage.getItem('google_sheet_webhook_url');
+  if (saved && saved.startsWith('https://script.google.com/macros/s/')) {
+    return saved;
   }
+  return GOOGLE_SCRIPT_WEBHOOK;
+}
+
+async function syncStudentToGoogleSheet(student) {
+  const webhookUrl = getActiveWebhookUrl();
 
   try {
     // إرسال البيانات إلى Google Apps Script Web App
@@ -856,18 +817,19 @@ async function syncStudentToGoogleSheet(student) {
       method: 'POST',
       mode: 'no-cors', // لتفادي قيود CORS مع Google Apps Script
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'text/plain;charset=utf-8'
       },
       body: JSON.stringify(student)
     });
     console.log('تم إرسال البيانات إلى Google Sheet بنجاح!');
+    showAlert(`تم حفظ الطالب ومزامنته مع Google Sheet بنجاح ✓`, 'success');
   } catch (err) {
     console.warn('تعذر الاتصال بـ Google Sheet:', err);
   }
 }
 
 async function testGoogleSheetSync() {
-  const url = document.getElementById('inpGoogleSheetUrl').value.trim();
+  const url = (document.getElementById('inpGoogleSheetUrl')?.value.trim()) || GOOGLE_SCRIPT_WEBHOOK;
   if (!url) {
     alert('يرجى إدخال رابط Google Apps Script Web App أولاً.');
     return;
@@ -895,7 +857,7 @@ async function testGoogleSheetSync() {
     await fetch(url, {
       method: 'POST',
       mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(testData)
     });
 
