@@ -9,7 +9,7 @@ const GOOGLE_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1U6qpwnVt
 const GOOGLE_SPREADSHEET_ID = "1U6qpwnVtTDf-K7OpwNWtI-seN7bN2GaDwfYT2m2SL60";
 
 // رابط Google Apps Script Web App المعتمد للمزامنة التلقائية
-const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec";
+const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbxbQqdLRIOGf7lr120UD0YPFpG0DHYcgqj8DTBZeha9ni0NG2E7Z2RtB_bEneDhUvVu/exec";
 
 const USERS = {
   postgrad: {
