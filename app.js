@@ -84,14 +84,23 @@ function loadStudents() {
   const saved = localStorage.getItem('postgrad_students_data');
   if (saved) {
     try {
-      studentsList = JSON.parse(saved);
+      let list = JSON.parse(saved);
+      // إزالة وحذف الطلاب التجريبيين الافتراضيين نهائياً من ذاكرة المتصفح
+      studentsList = list.filter(s => 
+        s.id !== 'STU-2024-001' && 
+        s.id !== 'STU-2024-002' && 
+        s.id !== 'STU-2024-003' &&
+        !s.fullName.includes('حيدر علي جاسم') &&
+        !s.fullName.includes('فاطمة محمد باقر') &&
+        !s.fullName.includes('كرار عبد الرضا')
+      );
     } catch (e) {
       studentsList = [];
     }
   } else {
     studentsList = [];
-    saveStudents();
   }
+  saveStudents();
   updateStats();
 }
 
