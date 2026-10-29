@@ -262,21 +262,21 @@ async function handleCreateStudent(e) {
     receiptImage: null
   };
 
-  // --- خطوة 1: أضفه للواجهة فوراً (Optimistic UI) ---
+  // --- خطوة 1: أضفه للواجهة فوراً بلحظتها (Optimistic UI فوري) ---
   studentsList.unshift(newStudent);
   saveToCache();
   renderStudentsTable();
   renderAccountsStudentSelector();
   updateStats();
   document.getElementById('newStudentForm').reset();
-  showAlert(`جاري حفظ الطالب (${fullName}) في Google Sheet...`, 'info');
+  showAlert(`تمت إضافة الطالب (${fullName}) فوراً، وجاري مزامنته مع Google Sheet في الخلفية...`, 'success');
   switchPgTab('list');
 
-  // --- خطوة 2: أرسله لـ Google Sheet ---
-  await syncStudentToGoogleSheet(newStudent);
+  // --- خطوة 2: أرسله لـ Google Sheet في الخلفية بدون تجميد الواجهة ---
+  syncStudentToGoogleSheet(newStudent);
 
-  // --- خطوة 3: بعد 3 ثوانٍ اجلب من الشيت لتأكيد الحفظ ---
-  setTimeout(() => fetchStudentsFromGoogleSheet(false), 3000);
+  // --- خطوة 3: تأكيد المزامنة بعد ثانيتين ---
+  setTimeout(() => fetchStudentsFromGoogleSheet(false), 2000);
 }
 
 // ==========================================
@@ -393,21 +393,19 @@ async function deleteStudent(id) {
   if (!student) return;
 
   if (confirm(`هل أنت متأكد من حذف سجل الطالب: ${student.fullName}؟`)) {
-    // خطوة 1: حذف فوري من الواجهة (Optimistic UI)
+    // خطوة 1: حذف فوري من الواجهة بلحظتها (Instant UI)
     studentsList = studentsList.filter(s => s.id !== id);
     saveToCache();
     renderStudentsTable();
     renderAccountsStudentSelector();
     updateStats();
-    showAlert(`جاري حذف (${student.fullName}) من Google Sheet...`, 'info');
+    showAlert(`تم حذف الطالب (${student.fullName}) من الواجهة فوراً وجاري حذفه من Google Sheet...`, 'info');
 
-    // خطوة 2: إرسال طلب الحذف لـ Google Sheet
-    await deleteStudentFromGoogleSheet(id);
+    // خطوة 2: إرسال طلب الحذف لـ Google Sheet في الخلفية
+    deleteStudentFromGoogleSheet(id);
 
-    // خطوة 3: تأكيد الحذف بجلب البيانات من الشيت بعد 3 ثوانٍ
-    setTimeout(() => fetchStudentsFromGoogleSheet(false), 3000);
-
-    showAlert(`تم حذف (${student.fullName}) من النظام ومن Google Sheet ✓`, 'info');
+    // خطوة 3: تأكيد الحذف بعد ثانيتين
+    setTimeout(() => fetchStudentsFromGoogleSheet(false), 2000);
   }
 }
 
@@ -594,13 +592,13 @@ async function handleSavePayment(e) {
   selectStudentForPayment(selectedStudentForAccounts.id);
   showAlert(`جاري حفظ بيانات تسديد (${selectedStudentForAccounts.fullName}) في Google Sheet...`, 'info');
 
-  // خطوة 2: مزامنة مع Google Sheet
-  await syncStudentToGoogleSheet(selectedStudentForAccounts);
+  // خطوة 2: مزامنة مع Google Sheet في الخلفية
+  syncStudentToGoogleSheet(selectedStudentForAccounts);
 
-  showAlert(`تم حفظ تسديد (${selectedStudentForAccounts.fullName}) بمبلغ ${Number(amount).toLocaleString('ar-IQ')} د.ع في Google Sheet ✓`, 'success');
+  showAlert(`تم حفظ تسديد (${selectedStudentForAccounts.fullName}) بمبلغ ${Number(amount).toLocaleString('ar-IQ')} د.ع ومزامنته في الخلفية ✓`, 'success');
 
-  // خطوة 3: تأكيد الحفظ بجلب البيانات من الشيت
-  setTimeout(() => fetchStudentsFromGoogleSheet(false), 3000);
+  // خطوة 3: تأكيد الحفظ بعد ثانيتين
+  setTimeout(() => fetchStudentsFromGoogleSheet(false), 2000);
 }
 
 // ==========================================
