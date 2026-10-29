@@ -56,6 +56,9 @@ window.addEventListener('DOMContentLoaded', () => {
   // تحميل الطلبة من التخزين المحلي
   loadStudents();
   
+  // جلب ومزامنة أحدث بيانات الطلبة من Google Sheet تلقائياً عند فتح الموقع
+  fetchStudentsFromGoogleSheet();
+  
   // تهيئة الأيقونات
   if (window.lucide) {
     lucide.createIcons();
@@ -188,6 +191,9 @@ function applyLoginSuccess() {
   }
   
   if (window.lucide) lucide.createIcons();
+  
+  // تحديث فوري وجلب أحدث بيانات الطلبة والتسديدات من Google Sheet
+  fetchStudentsFromGoogleSheet();
 }
 
 function handleLogout() {
@@ -873,6 +879,86 @@ async function testGoogleSheetSync() {
     showAlert('تم إرسال الطلب إلى Google Sheet بنجاح! تفقد ملف الجدول في حسابك.', 'success');
   } catch (err) {
     showAlert('حدث خطأ أثناء الاتصال بالرابط: ' + err.message, 'error');
+  }
+}
+
+// ==========================================
+// 12. جلب أحدث البيانات ومزامنتها مباشرة من Google Sheet
+// ==========================================
+async function fetchStudentsFromGoogleSheet(showNotification = false) {
+  try {
+    const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SPREADSHEET_ID}/gviz/tq?tqx=out:json`;
+    const resp = await fetch(url);
+    if (!resp.ok) return;
+    const text = await resp.text();
+    const prefix = '/*O_o*/\ngoogle.visualization.Query.setResponse(';
+    let jsonStr = text;
+    if (text.startsWith(prefix)) {
+      jsonStr = text.substring(prefix.length, text.length - 2);
+    }
+    const data = JSON.parse(jsonStr);
+    const rows = data.table?.rows || [];
+
+    const fetchedStudents = [];
+    for (let r of rows) {
+      const c = r.c || [];
+      const getVal = (idx) => {
+        if (!c[idx]) return '';
+        return (c[idx].f !== undefined && c[idx].f !== null) ? c[idx].f : (c[idx].v !== undefined ? c[idx].v : '');
+      };
+
+      const id = String(getVal(0) || '').trim();
+      const fullName = String(getVal(1) || '').trim();
+
+      // تجاهل صفوف الاختبار القديمة
+      if (!id || !fullName || id.startsWith('TEST-PYTHON') || id === 'TEST-001') continue;
+
+      const expenseType = String(getVal(2) || '');
+      const department = String(getVal(3) || '');
+      const studyType = String(getVal(4) || '');
+      const specialization = String(getVal(5) || '');
+      const admissionYear = String(getVal(6) || '');
+      const graduationYear = String(getVal(7) || '');
+      const statusText = String(getVal(8) || '');
+      const isPaid = statusText.includes('تم التسديد');
+      const paymentAmount = String(getVal(9) || '').replace(' د.ع', '').replace(/,/g, '').trim();
+      const paymentDate = String(getVal(10) || '');
+      const auditorName = String(getVal(11) || '');
+      const createdAt = String(getVal(12) || '');
+
+      const existing = studentsList.find(s => s.id === id);
+
+      fetchedStudents.push({
+        id,
+        fullName,
+        expenseType,
+        department,
+        studyType,
+        specialization,
+        admissionYear,
+        graduationYear,
+        isPaid,
+        paymentAmount: (paymentAmount === '-' || paymentAmount === '0') ? '' : paymentAmount,
+        paymentDate: paymentDate === '-' ? '' : paymentDate,
+        auditorName: auditorName === '-' ? '' : auditorName,
+        createdAt: createdAt || new Date().toLocaleDateString('ar-IQ'),
+        receiptImage: existing ? existing.receiptImage : null
+      });
+    }
+
+    if (fetchedStudents.length > 0) {
+      studentsList = fetchedStudents;
+      saveStudents();
+      renderStudentsTable();
+      renderAccountsStudentSelector();
+      updateStats();
+
+      if (showNotification) {
+        showAlert('تم تحديث وجلب بيانات الطلبة من Google Sheet بنجاح ✓', 'success');
+      }
+    }
+  } catch (err) {
+    console.warn('تعذر جلب البيانات من Google Sheet:', err);
   }
 }
 
