@@ -887,63 +887,26 @@ async function testGoogleSheetSync() {
 // ==========================================
 async function fetchStudentsFromGoogleSheet(showNotification = false) {
   try {
-    const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SPREADSHEET_ID}/gviz/tq?tqx=out:json`;
-    const resp = await fetch(url);
-    if (!resp.ok) return;
-    const text = await resp.text();
-    const prefix = '/*O_o*/\ngoogle.visualization.Query.setResponse(';
-    let jsonStr = text;
-    if (text.startsWith(prefix)) {
-      jsonStr = text.substring(prefix.length, text.length - 2);
+    // استخدام Google Apps Script doGet مباشرةً لضمان دقة البيانات
+    const webhookUrl = getActiveWebhookUrl();
+    const resp = await fetch(webhookUrl + '?action=getStudents', {
+      method: 'GET',
+      mode: 'cors'
+    });
+
+    let fetchedStudents = [];
+
+    if (resp.ok) {
+      // doGet أعاد بيانات JSON صحيحة
+      const jsonData = await resp.json();
+      if (Array.isArray(jsonData) && jsonData.length > 0) {
+        fetchedStudents = parseStudentsFromScript(jsonData);
+      }
     }
-    const data = JSON.parse(jsonStr);
-    const rows = data.table?.rows || [];
 
-    const fetchedStudents = [];
-    for (let r of rows) {
-      const c = r.c || [];
-      const getVal = (idx) => {
-        if (!c[idx]) return '';
-        return (c[idx].f !== undefined && c[idx].f !== null) ? c[idx].f : (c[idx].v !== undefined ? c[idx].v : '');
-      };
-
-      const id = String(getVal(0) || '').trim();
-      const fullName = String(getVal(1) || '').trim();
-
-      // تجاهل صفوف الاختبار القديمة
-      if (!id || !fullName || id.startsWith('TEST-PYTHON') || id === 'TEST-001') continue;
-
-      const expenseType = String(getVal(2) || '');
-      const department = String(getVal(3) || '');
-      const studyType = String(getVal(4) || '');
-      const specialization = String(getVal(5) || '');
-      const admissionYear = String(getVal(6) || '');
-      const graduationYear = String(getVal(7) || '');
-      const statusText = String(getVal(8) || '');
-      const isPaid = statusText.includes('تم التسديد');
-      const paymentAmount = String(getVal(9) || '').replace(' د.ع', '').replace(/,/g, '').trim();
-      const paymentDate = String(getVal(10) || '');
-      const auditorName = String(getVal(11) || '');
-      const createdAt = String(getVal(12) || '');
-
-      const existing = studentsList.find(s => s.id === id);
-
-      fetchedStudents.push({
-        id,
-        fullName,
-        expenseType,
-        department,
-        studyType,
-        specialization,
-        admissionYear,
-        graduationYear,
-        isPaid,
-        paymentAmount: (paymentAmount === '-' || paymentAmount === '0') ? '' : paymentAmount,
-        paymentDate: paymentDate === '-' ? '' : paymentDate,
-        auditorName: auditorName === '-' ? '' : auditorName,
-        createdAt: createdAt || new Date().toLocaleDateString('ar-IQ'),
-        receiptImage: existing ? existing.receiptImage : null
-      });
+    // احتياطياً: استخدام GViz API إن فشل doGet
+    if (fetchedStudents.length === 0) {
+      fetchedStudents = await fetchViaGViz();
     }
 
     if (fetchedStudents.length > 0) {
@@ -954,12 +917,135 @@ async function fetchStudentsFromGoogleSheet(showNotification = false) {
       updateStats();
 
       if (showNotification) {
-        showAlert('تم تحديث وجلب بيانات الطلبة من Google Sheet بنجاح ✓', 'success');
+        showAlert(`تم تحديث وجلب ${fetchedStudents.length} طالب من Google Sheet بنجاح ✓`, 'success');
       }
+    } else if (showNotification) {
+      showAlert('لا توجد بيانات طلبة في Google Sheet حتى الآن.', 'info');
     }
   } catch (err) {
     console.warn('تعذر جلب البيانات من Google Sheet:', err);
+    // محاولة أخيرة عبر GViz
+    try {
+      const fetchedStudents = await fetchViaGViz();
+      if (fetchedStudents.length > 0) {
+        studentsList = fetchedStudents;
+        saveStudents();
+        renderStudentsTable();
+        renderAccountsStudentSelector();
+        updateStats();
+        if (showNotification) {
+          showAlert(`تم تحديث ${fetchedStudents.length} طالب من Google Sheet ✓`, 'success');
+        }
+      }
+    } catch (e2) {
+      console.warn('فشل GViz أيضاً:', e2);
+    }
   }
+}
+
+// تحليل البيانات القادمة من doGet (Google Apps Script)
+function parseStudentsFromScript(jsonData) {
+  const result = [];
+  for (const row of jsonData) {
+    const id = String(row.id || '').trim();
+    const fullName = String(row.fullName || '').trim();
+    // تجاهل صفوف الاختبار
+    if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST')) continue;
+
+    const isPaid = String(row.status || '').includes('تم التسديد');
+    const paymentAmount = String(row.paymentAmount || '')
+      .replace(' د.ع', '').replace(/,/g, '').trim();
+    const paymentDate = String(row.paymentDate || '');
+    const auditorName = String(row.auditorName || '');
+    const createdAt = String(row.createdAt || '');
+
+    const existing = studentsList.find(s => s.id === id);
+    result.push({
+      id,
+      fullName,
+      expenseType: String(row.expenseType || ''),
+      department: String(row.department || ''),
+      studyType: String(row.studyType || ''),
+      specialization: String(row.specialization || ''),
+      admissionYear: String(row.admissionYear || ''),
+      graduationYear: String(row.graduationYear || ''),
+      isPaid,
+      paymentAmount: (paymentAmount === '-' || paymentAmount === '' || paymentAmount === '0') ? '' : paymentAmount,
+      paymentDate: paymentDate === '-' ? '' : paymentDate,
+      auditorName: auditorName === '-' ? '' : auditorName,
+      createdAt: createdAt || new Date().toLocaleDateString('ar-IQ'),
+      receiptImage: existing ? existing.receiptImage : null
+    });
+  }
+  return result;
+}
+
+// جلب البيانات عبر GViz API (احتياطي)
+async function fetchViaGViz() {
+  const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SPREADSHEET_ID}/gviz/tq?tqx=out:json`;
+  const resp = await fetch(url);
+  if (!resp.ok) return [];
+  const text = await resp.text();
+  const prefix = '/*O_o*/\ngoogle.visualization.Query.setResponse(';
+  let jsonStr = text;
+  if (text.startsWith(prefix)) {
+    jsonStr = text.substring(prefix.length, text.length - 2);
+  }
+  const data = JSON.parse(jsonStr);
+  const rows = data.table?.rows || [];
+
+  // دالة مساعدة لتحويل صيغة تاريخ GViz
+  const parseGVizDate = (val) => {
+    if (!val) return '';
+    const s = String(val);
+    // تحويل Date(YYYY,M,D) إلى YYYY-MM-DD
+    const m = s.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})\)$/);
+    if (m) {
+      return `${m[1]}-${String(Number(m[2])+1).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    }
+    return s;
+  };
+
+  const result = [];
+  for (const r of rows) {
+    const c = r.c || [];
+    const getVal = (idx) => {
+      if (!c[idx]) return '';
+      if (c[idx].f !== undefined && c[idx].f !== null) return c[idx].f;
+      if (c[idx].v !== undefined && c[idx].v !== null) return c[idx].v;
+      return '';
+    };
+
+    const id = String(getVal(0) || '').trim();
+    const fullName = String(getVal(1) || '').trim();
+    // تجاهل صفوف الاختبار وأي صف فارغ
+    if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST')) continue;
+
+    const statusText = String(getVal(8) || '');
+    const isPaid = statusText.includes('تم التسديد');
+    const paymentAmount = String(getVal(9) || '').replace(' د.ع', '').replace(/,/g, '').trim();
+    const rawPayDate = getVal(10);
+    const rawCreatedAt = getVal(12);
+
+    const existing = studentsList.find(s => s.id === id);
+    result.push({
+      id,
+      fullName,
+      expenseType: String(getVal(2) || ''),
+      department: String(getVal(3) || ''),
+      studyType: String(getVal(4) || ''),
+      specialization: String(getVal(5) || ''),
+      admissionYear: String(getVal(6) || ''),
+      graduationYear: String(getVal(7) || ''),
+      isPaid,
+      paymentAmount: (paymentAmount === '-' || paymentAmount === '' || paymentAmount === '0') ? '' : paymentAmount,
+      paymentDate: parseGVizDate(rawPayDate) === '-' ? '' : parseGVizDate(rawPayDate),
+      auditorName: String(getVal(11) || '') === '-' ? '' : String(getVal(11) || ''),
+      createdAt: parseGVizDate(rawCreatedAt) || new Date().toLocaleDateString('ar-IQ'),
+      receiptImage: existing ? existing.receiptImage : null
+    });
+  }
+  return result;
 }
 
 // ==========================================
