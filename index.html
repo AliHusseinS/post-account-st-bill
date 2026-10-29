@@ -233,18 +233,18 @@
           <i data-lucide="check-circle" class="w-6 h-6"></i>
         </div>
         <div>
-          <p class="text-xs text-slate-500">تم التسديد</p>
+          <p class="text-xs text-slate-500">مسدد كلياً</p>
           <p id="statPaidCount" class="text-xl font-extrabold text-emerald-600">0</p>
         </div>
       </div>
 
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
         <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-          <i data-lucide="clock" class="w-6 h-6"></i>
+          <i data-lucide="pie-chart" class="w-6 h-6"></i>
         </div>
         <div>
-          <p class="text-xs text-slate-500">بانتظار التسديد</p>
-          <p id="statPendingCount" class="text-xl font-extrabold text-amber-600">0</p>
+          <p class="text-xs text-slate-500">مسدد جزئياً</p>
+          <p id="statPartialCount" class="text-xl font-extrabold text-amber-600">0</p>
         </div>
       </div>
 
@@ -321,7 +321,7 @@
             <!-- النفقة -->
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1.5">نوع النفقة <span class="text-rose-500">*</span></label>
-              <select id="inpExpenseType" required class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none text-sm bg-white">
+              <select id="inpExpenseType" onchange="handleExpenseTypeChange()" required class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none text-sm bg-white">
                 <option value="">-- اختر نوع النفقة --</option>
                 <option value="نفقة خاصة">نفقة خاصة</option>
                 <option value="نفقة عامة">نفقة عامة</option>
@@ -370,6 +370,16 @@
               <label class="block text-xs font-bold text-slate-700 mb-1.5">سنة التخرج (أو المتوقعة) <span class="text-rose-500">*</span></label>
               <input type="text" id="inpGraduationYear" required placeholder="مثال: 2025 - 2026 أو قيد الدراسة" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none text-sm">
             </div>
+
+            <!-- المبلغ الكلي المقرر للدراسة -->
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1.5">المبلغ الكلي المقرر للأجور (د.ع) <span class="text-rose-500">*</span></label>
+              <div class="relative">
+                <input type="number" id="inpTotalFee" required min="0" step="any" placeholder="مثال: 3750000" class="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none text-sm font-bold text-teal-800">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-[10px] text-slate-400 font-bold">د.ع</span>
+              </div>
+              <p class="text-[10px] text-slate-400 mt-1">المبلغ الإجمالي الأصلي (اكتب 0 للنفقة العامة)</p>
+            </div>
           </div>
 
           <div class="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
@@ -398,8 +408,9 @@
             <!-- فلتر الحالة -->
             <select id="filterStatus" onchange="renderStudentsTable()" class="px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white text-slate-700 outline-none font-medium">
               <option value="all">جميع الحالات</option>
-              <option value="paid">تم التسديد</option>
-              <option value="pending">بانتظار التسديد</option>
+              <option value="paid">مسدد كلياً</option>
+              <option value="partial">مسدد جزئياً</option>
+              <option value="unpaid">لم يتم التسديد</option>
             </select>
 
             <!-- فلتر النفقة -->
@@ -418,16 +429,15 @@
             <thead>
               <tr class="bg-slate-100/80 text-slate-600 font-bold border-b border-slate-200">
                 <th class="p-3.5">ت</th>
-                <th class="p-3.5">اسم الطالب الرباعي</th>
+                <th class="p-3.5">اسم الطالب والمعرف</th>
                 <th class="p-3.5">النفقة</th>
                 <th class="p-3.5">القسم والتخصص</th>
                 <th class="p-3.5">نوع الدراسة</th>
-                <th class="p-3.5">سنة القبول / التخرج</th>
+                <th class="p-3.5">المبلغ المقرر</th>
+                <th class="p-3.5">إجمالي المسدد</th>
+                <th class="p-3.5">المتبقي</th>
                 <th class="p-3.5">حالة التسديد</th>
-                <th class="p-3.5">المبلغ المسدد</th>
-                <th class="p-3.5">تاريخ التسديد</th>
-                <th class="p-3.5">المدقق</th>
-                <th class="p-3.5">صورة الوصل</th>
+                <th class="p-3.5">حركات التسديد</th>
                 <th class="p-3.5 text-center">الاجراء</th>
               </tr>
             </thead>
@@ -529,29 +539,65 @@
               </div>
             </div>
 
-            <!-- حقول الدفع والتدقيق (صلاحية قسم الحسابات) -->
-            <div class="space-y-4 pt-2">
-              
+            <!-- بطاقة الموقف المالي وحالة التسديد للطالب -->
+            <div class="bg-gradient-to-br from-indigo-50/60 to-slate-50 p-4 rounded-2xl border border-indigo-100 space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                  <i data-lucide="calculator" class="w-4 h-4 text-indigo-600"></i>
+                  <span>الموقف المالي للتسديد</span>
+                </span>
+                <span id="dispPaymentProgressPercent" class="text-xs font-bold text-indigo-700">0%</span>
+              </div>
+
+              <!-- شريط التقدم المئوي للتسديد -->
+              <div class="w-full bg-slate-200/80 rounded-full h-2.5 overflow-hidden">
+                <div id="dispPaymentProgressBar" class="bg-gradient-to-r from-teal-500 to-indigo-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+
+              <!-- مربعات المبالغ الثلاثة: المقرر | المسدد | المتبقي -->
+              <div class="grid grid-cols-3 gap-2.5 pt-1 text-center">
+                <div class="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-2xs">
+                  <span class="block text-[10px] text-slate-400 font-semibold mb-0.5">المبلغ المقرر الأصلي</span>
+                  <span id="dispTotalFee" class="text-xs font-extrabold text-slate-800">0 د.ع</span>
+                </div>
+                <div class="bg-white p-2.5 rounded-xl border border-emerald-200/80 shadow-2xs">
+                  <span class="block text-[10px] text-emerald-600 font-semibold mb-0.5">إجمالي المسدد</span>
+                  <span id="dispPaidAmount" class="text-xs font-extrabold text-emerald-600">0 د.ع</span>
+                </div>
+                <div class="bg-white p-2.5 rounded-xl border border-amber-200/80 shadow-2xs">
+                  <span class="block text-[10px] text-amber-700 font-semibold mb-0.5">المبلغ المتبقي</span>
+                  <span id="dispRemainingAmount" class="text-xs font-extrabold text-amber-700">0 د.ع</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- نموذج إضافة وصل / حركة تسديد جديدة -->
+            <div class="border-t border-slate-100 pt-4 space-y-4">
+              <h4 class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <i data-lucide="plus-circle" class="w-4 h-4 text-indigo-600"></i>
+                <span>تسجيل وصل ودفعة تسديد جديدة</span>
+              </h4>
+
               <!-- مربع رفع صورة الوصل -->
               <div>
                 <label class="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span>صورة الوصل الخاص بالدفع <span class="text-rose-500">*</span></span>
+                  <span>صورة وصل التسديد <span class="text-rose-500">*</span></span>
                 </label>
                 
                 <div id="receiptDropZone" onclick="document.getElementById('receiptFileInput').click()" class="border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50/50 hover:bg-indigo-50/30 rounded-2xl p-4 text-center cursor-pointer transition relative group">
                   <input type="file" id="receiptFileInput" accept="image/*" onchange="handleReceiptFileSelect(event)" class="hidden">
                   
-                  <div id="receiptUploadPlaceholder" class="space-y-2 py-4">
-                    <div class="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto transition group-hover:scale-105">
-                      <i data-lucide="upload-cloud" class="w-6 h-6"></i>
+                  <div id="receiptUploadPlaceholder" class="space-y-2 py-3">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto transition group-hover:scale-105">
+                      <i data-lucide="upload-cloud" class="w-5 h-5"></i>
                     </div>
                     <p class="text-xs font-bold text-slate-700">اضغط لرفع صورة الوصل أو اسحب الصورة إلى هنا</p>
-                    <p class="text-[10px] text-slate-400">سيتم حفظ الصورة وعرضها للمراجعة والتنزيل في تقرير الـ PDF</p>
+                    <p class="text-[10px] text-slate-400">سيتم حفظ الصورة ضمن سجل وصولات الطالب</p>
                   </div>
 
                   <!-- معاينة الصورة بعد الرفع -->
                   <div id="receiptPreviewBox" class="hidden relative">
-                    <img id="receiptPreviewImg" src="" alt="معاينة الوصل" class="max-h-56 mx-auto rounded-xl shadow-md border border-slate-200 object-contain">
+                    <img id="receiptPreviewImg" src="" alt="معاينة الوصل" class="max-h-48 mx-auto rounded-xl shadow-md border border-slate-200 object-contain">
                     <div class="absolute top-2 left-2 flex gap-1.5">
                       <button type="button" onclick="event.stopPropagation(); removeReceiptImage()" class="p-1.5 bg-rose-600 text-white rounded-lg shadow hover:bg-rose-700 text-xs flex items-center gap-1" title="حذف الصورة">
                         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
@@ -566,11 +612,11 @@
 
               <!-- مربعات إدخال المبلغ وتاريخ التسديد واسم المدقق -->
               <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <!-- المبلغ -->
+                <!-- مبلغ هذه الدفعة -->
                 <div>
-                  <label class="block text-xs font-bold text-slate-700 mb-1.5">المبلغ المسدد <span class="text-rose-500">*</span></label>
+                  <label class="block text-xs font-bold text-slate-700 mb-1.5">مبلغ هذه الدفعة <span class="text-rose-500">*</span></label>
                   <div class="relative">
-                    <input type="number" id="inpPaymentAmount" required min="1" step="any" placeholder="مثال: 1500000" class="w-full pl-10 pr-3 py-2.5 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-xs font-bold">
+                    <input type="number" id="inpPaymentAmount" required min="1" step="any" placeholder="مثال: 100000" class="w-full pl-10 pr-3 py-2.5 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-xs font-bold">
                     <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-[10px] text-slate-400 font-bold">د.ع</span>
                   </div>
                 </div>
@@ -584,18 +630,47 @@
                 <!-- اسم المدقق -->
                 <div>
                   <label class="block text-xs font-bold text-slate-700 mb-1.5">المدقق <span class="text-rose-500">*</span></label>
-                  <input type="text" id="inpAuditorName" required placeholder="المدقق" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-xs">
+                  <input type="text" id="inpAuditorName" required placeholder="اسم المدقق" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none text-xs">
                 </div>
               </div>
 
+              <!-- زر إضافة الدفعة -->
+              <div class="flex items-center justify-end pt-1">
+                <button type="submit" id="btnSubmitPayment" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center gap-2">
+                  <i data-lucide="plus" class="w-4 h-4"></i>
+                  <span>إضافة وحفظ الدفعة والوصل</span>
+                </button>
+              </div>
             </div>
 
-            <!-- أزرار الحفظ -->
-            <div class="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
-              <button type="submit" id="btnSubmitPayment" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center gap-2">
-                <i data-lucide="check-check" class="w-4 h-4"></i>
-                <span>حفظ</span>
-              </button>
+            <!-- سجل الوصولات وحركات التسديد السابقة لهذا الطالب -->
+            <div class="border-t border-slate-200 pt-5 space-y-3">
+              <div class="flex items-center justify-between">
+                <h4 class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <i data-lucide="receipt" class="w-4 h-4 text-teal-600"></i>
+                  <span>سجل وصولات ودفعات الطالب</span>
+                </h4>
+                <span id="dispPaymentsCountBadge" class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold">0 وصولات</span>
+              </div>
+
+              <!-- جدول الوصولات -->
+              <div class="overflow-x-auto rounded-xl border border-slate-200">
+                <table class="w-full text-right text-xs">
+                  <thead class="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                    <tr>
+                      <th class="p-2.5">الدفعة</th>
+                      <th class="p-2.5">المبلغ المدفوع</th>
+                      <th class="p-2.5">تاريخ التسديد</th>
+                      <th class="p-2.5">المدقق</th>
+                      <th class="p-2.5 text-center">صورة الوصل</th>
+                      <th class="p-2.5 text-center">حذف</th>
+                    </tr>
+                  </thead>
+                  <tbody id="studentPaymentsTableBody" class="divide-y divide-slate-100">
+                    <!-- يتم تعبئة صفوف الدفعات عبر JavaScript -->
+                  </tbody>
+                </table>
+              </div>
             </div>
 
           </form>
@@ -658,7 +733,7 @@
 
         <div>
           <label class="block font-bold text-slate-700 mb-1">رابط تطبيق الويب (Google Apps Script Web App URL):</label>
-          <input type="url" id="inpGoogleSheetUrl" placeholder="https://script.google.com/macros/s/AKfycbxqC-EvruQytQK3fgJMwhKGkOQFo7KKC_pGSuFPPYw1W32whJ6g0E1ESVAe5Y1pE19Q/exec" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-emerald-200 outline-none">
+          <input type="url" id="inpGoogleSheetUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-emerald-200 outline-none">
         </div>
 
         <div class="flex items-center justify-between pt-2">
@@ -729,27 +804,45 @@
 
       <!-- معلومات التسديد المالي والتدقيق (من قسم الحسابات) -->
       <div class="mb-5">
-        <h4 class="font-bold text-xs bg-slate-100 p-1.5 rounded mb-2 border-r-4 border-indigo-600">ثانياً: بيانات التسديد والتدقيق المالي (قسم الحسابات)</h4>
+        <h4 class="font-bold text-xs bg-slate-100 p-1.5 rounded mb-2 border-r-4 border-indigo-600">ثانياً: الموقف المالي وحركات التسديد (قسم الحسابات)</h4>
+        
+        <!-- ملخص المبالغ -->
         <table class="w-full text-xs border border-slate-300 mb-3">
           <tr class="border-b border-slate-200">
-            <td class="p-2 bg-slate-50 font-bold w-1/4">المبلغ المسدد:</td>
-            <td id="pdfPaymentAmount" class="p-2 font-extrabold text-indigo-900 text-sm w-1/4"></td>
-            <td class="p-2 bg-slate-50 font-bold w-1/4">تاريخ التسديد:</td>
-            <td id="pdfPaymentDate" class="p-2 w-1/4"></td>
+            <td class="p-2 bg-slate-50 font-bold w-1/4">المبلغ الكلي المقرر:</td>
+            <td id="pdfTotalFee" class="p-2 font-bold text-slate-800 w-1/4"></td>
+            <td class="p-2 bg-slate-50 font-bold w-1/4">إجمالي المسدد:</td>
+            <td id="pdfPaidAmount" class="p-2 font-extrabold text-emerald-800 text-sm w-1/4"></td>
           </tr>
           <tr>
-            <td class="p-2 bg-slate-50 font-bold">المدقق:</td>
-            <td id="pdfAuditorName" class="p-2 font-bold"></td>
-            <td class="p-2 bg-slate-50 font-bold">تاريخ التدقيق:</td>
-            <td id="pdfAuditDate" class="p-2"></td>
+            <td class="p-2 bg-slate-50 font-bold">المبلغ المتبقي:</td>
+            <td id="pdfRemainingAmount" class="p-2 font-bold text-amber-800"></td>
+            <td class="p-2 bg-slate-50 font-bold">حالة التسديد:</td>
+            <td id="pdfPaymentStatusText" class="p-2 font-extrabold text-indigo-900"></td>
           </tr>
+        </table>
+
+        <!-- جدول الأقساط والوصولات المسددة -->
+        <h5 class="font-bold text-[11px] text-slate-700 mb-1">جدول وصولات ودفعات التسديد المسجلة:</h5>
+        <table class="w-full text-[11px] border border-slate-300 mb-3 text-right">
+          <thead class="bg-slate-100 font-bold">
+            <tr>
+              <th class="p-1.5 border border-slate-300">الدفعة</th>
+              <th class="p-1.5 border border-slate-300">المبلغ المدفوع</th>
+              <th class="p-1.5 border border-slate-300">تاريخ التسديد</th>
+              <th class="p-1.5 border border-slate-300">المدقق</th>
+            </tr>
+          </thead>
+          <tbody id="pdfPaymentsTableBody">
+            <!-- يملأ برمجياً -->
+          </tbody>
         </table>
 
         <!-- صورة الوصل المرفقة -->
         <div class="border border-slate-200 p-2 rounded text-center bg-slate-50">
-          <p class="text-[10px] text-slate-500 font-bold mb-1">نسخة مصورة من وصل الدفع الأصلي المعتمد:</p>
-          <img id="pdfReceiptImage" src="" alt="صورة الوصل" class="max-h-64 max-w-full mx-auto rounded border border-slate-300 object-contain">
-          <p id="pdfNoReceiptPlaceholder" class="hidden text-xs text-rose-500 py-4 font-bold">لم يتم إرفاق صورة الوصل بعد (بانتظار التسديد والتدقيق)</p>
+          <p class="text-[10px] text-slate-500 font-bold mb-1">نسخة مصورة من أحدث وصل دفع معتمد:</p>
+          <img id="pdfReceiptImage" src="" alt="صورة الوصل" class="max-h-56 max-w-full mx-auto rounded border border-slate-300 object-contain">
+          <p id="pdfNoReceiptPlaceholder" class="hidden text-xs text-rose-500 py-3 font-bold">لم يتم إرفاق صورة الوصل بعد (بانتظار التسديد والتدقيق)</p>
         </div>
       </div>
 
