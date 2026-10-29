@@ -77,18 +77,90 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // -------------------------------------------------------
+// الحسابات المالية التلقائية للطالب (الأقساط، المسدد، المتبقي، الحالة)
+// -------------------------------------------------------
+function calculateStudentFinancials(s) {
+  if (!s) return s;
+  s.totalFee = Number(String(s.totalFee || 0).replace(/[^\d.]/g, '')) || 0;
+  if (!Array.isArray(s.payments)) {
+    s.payments = [];
+  }
+  
+  // إذا لم يكن لديه سجل وصولات تفصيلي لكن لديه مبلغ قديم مسجل
+  if (s.payments.length === 0 && s.paymentAmount && Number(String(s.paymentAmount).replace(/[^\d.]/g, '')) > 0) {
+    const legacyAmt = Number(String(s.paymentAmount).replace(/[^\d.]/g, ''));
+    s.payments.push({
+      id: 'PAY-LEGACY-1',
+      amount: legacyAmt,
+      date: s.paymentDate || '-',
+      auditor: s.auditorName || '-',
+      receiptImage: s.receiptImage || null
+    });
+  }
+
+  // حساب إجمالي المدفوع
+  s.paidAmount = s.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  s.paymentAmount = s.paidAmount; // للتوافق
+
+  // حساب المتبقي
+  s.remainingAmount = Math.max(0, s.totalFee - s.paidAmount);
+
+  // تحديد الحالة بدقة
+  if (s.totalFee > 0) {
+    if (s.paidAmount >= s.totalFee) {
+      s.status = 'تم التسديد بالكامل';
+      s.isPaid = true;
+    } else if (s.paidAmount > 0) {
+      s.status = 'مسدد جزئياً';
+      s.isPaid = false;
+    } else {
+      s.status = 'لم يتم التسديد';
+      s.isPaid = false;
+    }
+  } else {
+    if (s.paidAmount > 0) {
+      s.status = 'تم التسديد بالكامل';
+      s.isPaid = true;
+    } else {
+      s.status = 'لم يتم التسديد';
+      s.isPaid = false;
+    }
+  }
+
+  // النسبة المئوية للتسديد
+  s.percent = s.totalFee > 0 ? Math.min(100, Math.round((s.paidAmount / s.totalFee) * 100)) : (s.paidAmount > 0 ? 100 : 0);
+
+  // تحديث تاريخ آخر تسديد واسم آخر مدقق وصورة الوصل
+  if (s.payments.length > 0) {
+    const latest = s.payments[0];
+    s.paymentDate = latest.date || s.paymentDate || '-';
+    s.auditorName = latest.auditor || s.auditorName || '-';
+    if (latest.receiptImage) {
+      s.receiptImage = latest.receiptImage;
+    }
+  }
+
+  return s;
+}
+
+// -------------------------------------------------------
 // localStorage = كاش فقط للعرض السريع
 // Google Sheet = المصدر الوحيد الحقيقي للبيانات
 // -------------------------------------------------------
 function saveToCache() {
+  studentsList.forEach(s => calculateStudentFinancials(s));
   localStorage.setItem('postgrad_students_data', JSON.stringify(studentsList));
 }
 
 function loadFromCache() {
   try {
     const saved = localStorage.getItem('postgrad_students_data');
-    if (saved) studentsList = JSON.parse(saved);
-    else studentsList = [];
+    if (saved) {
+      studentsList = JSON.parse(saved);
+      studentsList.forEach(s => calculateStudentFinancials(s));
+    } else {
+      studentsList = [];
+    }
   } catch (e) {
     studentsList = [];
   }
@@ -219,6 +291,23 @@ function switchPgTab(tab) {
 }
 
 // ==========================================
+// اقتراح المبلغ المقرر تلقائياً حسب نوع النفقة
+// ==========================================
+function handleExpenseTypeChange() {
+  const expenseType = document.getElementById('inpExpenseType')?.value;
+  const inpTotalFee = document.getElementById('inpTotalFee');
+  if (!inpTotalFee) return;
+
+  if (expenseType === 'نفقة خاصة') {
+    if (!inpTotalFee.value || inpTotalFee.value === '0') {
+      inpTotalFee.value = '3750000';
+    }
+  } else if (expenseType === 'نفقة عامة' || expenseType === 'منحة دراسية') {
+    inpTotalFee.value = '0';
+  }
+}
+
+// ==========================================
 // 6. إضافة طالب جديد (قسم الدراسات العليا فقط)
 // ==========================================
 async function handleCreateStudent(e) {
@@ -245,6 +334,9 @@ async function handleCreateStudent(e) {
 
   // توليد ID فريد بالوقت لتجنب التكرار
   const newId = 'STU-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-5);
+  const totalFeeInput = document.getElementById('inpTotalFee')?.value || '0';
+  const totalFee = Number(totalFeeInput) || 0;
+
   const newStudent = {
     id: newId,
     fullName,
@@ -254,13 +346,20 @@ async function handleCreateStudent(e) {
     specialization,
     admissionYear,
     graduationYear,
+    totalFee: totalFee,
+    payments: [],
+    paidAmount: 0,
+    remainingAmount: totalFee,
     isPaid: false,
+    status: 'لم يتم التسديد',
     paymentAmount: '',
     paymentDate: '',
     auditorName: '',
     createdAt: new Date().toLocaleDateString('ar-IQ') + ' ' + new Date().toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' }),
     receiptImage: null
   };
+
+  calculateStudentFinancials(newStudent);
 
   // --- خطوة 1: أضفه للواجهة فوراً بلحظتها (Optimistic UI فوري) ---
   studentsList.unshift(newStudent);
@@ -269,7 +368,7 @@ async function handleCreateStudent(e) {
   renderAccountsStudentSelector();
   updateStats();
   document.getElementById('newStudentForm').reset();
-  showAlert(`تمت إضافة الطالب (${fullName}) فوراً، وجاري مزامنته مع Google Sheet في الخلفية...`, 'success');
+  showAlert(`تمت إضافة الطالب (${fullName}) بمبلغ مقرر ${totalFee.toLocaleString('ar-IQ')} د.ع فوراً ومزامنته في الخلفية...`, 'success');
   switchPgTab('list');
 
   // --- خطوة 2: أرسله لـ Google Sheet في الخلفية بدون تجميد الواجهة ---
@@ -292,6 +391,8 @@ function renderStudentsTable() {
   if (!tbody) return;
 
   const filtered = studentsList.filter(s => {
+    calculateStudentFinancials(s);
+
     // بحث
     const matchSearch = !search || 
       s.fullName.toLowerCase().includes(search) ||
@@ -302,8 +403,9 @@ function renderStudentsTable() {
 
     // فلترة حالة التسديد
     let matchStatus = true;
-    if (filterStatus === 'paid') matchStatus = s.isPaid;
-    if (filterStatus === 'pending') matchStatus = !s.isPaid;
+    if (filterStatus === 'paid') matchStatus = (s.status === 'تم التسديد بالكامل' || s.isPaid);
+    if (filterStatus === 'partial') matchStatus = (s.status === 'مسدد جزئياً');
+    if (filterStatus === 'unpaid') matchStatus = (s.status === 'لم يتم التسديد');
 
     // فلترة النفقة
     let matchExpense = true;
@@ -327,22 +429,37 @@ function renderStudentsTable() {
   emptyState.classList.add('hidden');
   
   tbody.innerHTML = filtered.map((s, idx) => {
-    const statusBadge = s.isPaid 
-      ? `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
-          <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
-          <span>تم التسديد</span>
-        </span>`
-      : `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
-          <i data-lucide="clock" class="w-3.5 h-3.5"></i>
-          <span>بانتظار التسديد</span>
-        </span>`;
+    calculateStudentFinancials(s);
 
-    const receiptButton = s.receiptImage
-      ? `<button onclick="openZoomModal('${s.id}')" title="معاينة الوصل" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-semibold text-[11px] border border-indigo-200 transition">
-          <i data-lucide="image" class="w-3.5 h-3.5"></i>
-          <span>معاينة الوصل</span>
+    let statusBadge = '';
+    if (s.status === 'تم التسديد بالكامل' || s.isPaid) {
+      statusBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+        <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+        <span>تم التسديد بالكامل</span>
+      </span>`;
+    } else if (s.status === 'مسدد جزئياً') {
+      statusBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+        <i data-lucide="pie-chart" class="w-3.5 h-3.5"></i>
+        <span>مسدد جزئياً (${s.percent}%)</span>
+      </span>`;
+    } else {
+      statusBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+        <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+        <span>لم يتم التسديد</span>
+      </span>`;
+    }
+
+    const paymentsCount = s.payments ? s.payments.length : 0;
+    const latestReceipt = (s.payments && s.payments.find(p => p.receiptImage)?.receiptImage) || s.receiptImage;
+
+    const receiptButton = latestReceipt
+      ? `<button onclick="openZoomModal('${latestReceipt}')" title="معاينة الوصل" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-semibold text-[10px] border border-indigo-200 transition">
+          <i data-lucide="image" class="w-3 h-3"></i>
+          <span>${paymentsCount > 1 ? paymentsCount + ' وصولات' : 'معاينة الوصل'}</span>
         </button>`
-      : `<span class="text-slate-400 text-[11px]">لا يوجد</span>`;
+      : (paymentsCount > 0 
+          ? `<span class="text-slate-600 font-bold text-[10px]">${paymentsCount} وصولات</span>` 
+          : `<span class="text-slate-400 text-[10px]">لا يوجد</span>`);
 
     return `
       <tr class="hover:bg-slate-50/80 transition">
@@ -361,15 +478,12 @@ function renderStudentsTable() {
           <p class="text-[10px] text-slate-400">${s.specialization}</p>
         </td>
         <td class="p-3.5 text-slate-600 font-medium">${s.studyType}</td>
-        <td class="p-3.5 text-slate-600">
-          <span>${s.admissionYear}</span> / <span class="text-slate-400">${s.graduationYear}</span>
+        <td class="p-3.5 font-bold text-slate-700">${Number(s.totalFee || 0).toLocaleString('ar-IQ')} د.ع</td>
+        <td class="p-3.5 font-extrabold text-emerald-600">${Number(s.paidAmount || 0).toLocaleString('ar-IQ')} د.ع</td>
+        <td class="p-3.5 font-bold ${s.remainingAmount > 0 ? 'text-amber-700' : 'text-slate-400'}">
+          ${Number(s.remainingAmount || 0).toLocaleString('ar-IQ')} د.ع
         </td>
         <td class="p-3.5">${statusBadge}</td>
-        <td class="p-3.5 font-bold ${s.isPaid ? 'text-indigo-600' : 'text-slate-400'}">
-          ${s.paymentAmount ? Number(s.paymentAmount).toLocaleString('ar-IQ') + ' د.ع' : '-'}
-        </td>
-        <td class="p-3.5 text-slate-600">${s.paymentDate || '-'}</td>
-        <td class="p-3.5 text-slate-700 font-medium">${s.auditorName || '-'}</td>
         <td class="p-3.5">${receiptButton}</td>
         <td class="p-3.5 text-center">
           <div class="flex items-center justify-center gap-1.5">
@@ -430,7 +544,7 @@ async function deleteStudentFromGoogleSheet(studentId) {
 }
 
 // ==========================================
-// 8. واجهة قسم الحسابات: اختيار الطالب وتسجيل الوصل
+// 8. واجهة قسم الحسابات: اختيار الطالب، الموقف المالي، وسجل الوصولات
 // ==========================================
 function renderAccountsStudentSelector() {
   const container = document.getElementById('accountsStudentCardsList');
@@ -439,8 +553,10 @@ function renderAccountsStudentSelector() {
 
   if (!container) return;
 
-  const pendingList = studentsList.filter(s => !s.isPaid);
-  if (badge) badge.innerText = `${pendingList.length} لم يتم التسديد`;
+  studentsList.forEach(s => calculateStudentFinancials(s));
+
+  const pendingList = studentsList.filter(s => s.remainingAmount > 0 || !s.isPaid);
+  if (badge) badge.innerText = `${pendingList.length} بانتظار استكمال التسديد`;
 
   const filtered = studentsList.filter(s => {
     return !search || 
@@ -456,6 +572,15 @@ function renderAccountsStudentSelector() {
 
   container.innerHTML = filtered.map(s => {
     const isSelected = selectedStudentForAccounts?.id === s.id;
+    let statusPill = '';
+    if (s.status === 'تم التسديد بالكامل' || s.isPaid) {
+      statusPill = '<span class="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">مسدد كلياً</span>';
+    } else if (s.status === 'مسدد جزئياً') {
+      statusPill = `<span class="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">مسدد جزئياً (${s.percent}%)</span>`;
+    } else {
+      statusPill = '<span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">لم يسدد</span>';
+    }
+
     return `
       <div onclick="selectStudentForPayment('${s.id}')" class="p-3 rounded-2xl border cursor-pointer transition flex items-center justify-between ${isSelected ? 'border-indigo-600 bg-indigo-50/70 shadow-sm' : 'border-slate-200 hover:border-indigo-300 hover:bg-slate-50'}">
         <div class="space-y-0.5">
@@ -464,12 +589,14 @@ function renderAccountsStudentSelector() {
             <span class="text-[9px] px-1.5 py-0.2 rounded font-semibold ${s.expenseType === 'نفقة خاصة' ? 'bg-purple-100 text-purple-700' : 'bg-teal-100 text-teal-700'}">${s.expenseType}</span>
           </div>
           <p class="text-[11px] text-slate-500">${s.department} - ${s.studyType}</p>
+          <div class="flex items-center gap-2 text-[10px] text-slate-400">
+            <span>المقرر: ${Number(s.totalFee || 0).toLocaleString('ar-IQ')} د.ع</span>
+            <span>•</span>
+            <span class="text-emerald-600 font-bold">المدفوع: ${Number(s.paidAmount || 0).toLocaleString('ar-IQ')} د.ع</span>
+          </div>
         </div>
         <div class="text-left shrink-0">
-          ${s.isPaid 
-            ? '<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">مسدد</span>'
-            : '<span class="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">لم يتم التسديد</span>'
-          }
+          ${statusPill}
         </div>
       </div>
     `;
@@ -480,6 +607,7 @@ function selectStudentForPayment(id) {
   selectedStudentForAccounts = studentsList.find(s => s.id === id);
   if (!selectedStudentForAccounts) return;
 
+  calculateStudentFinancials(selectedStudentForAccounts);
   renderAccountsStudentSelector();
 
   const emptyPrompt = document.getElementById('accNoStudentSelectedPrompt');
@@ -496,25 +624,107 @@ function selectStudentForPayment(id) {
   document.getElementById('dispStudentSpec').innerText = selectedStudentForAccounts.specialization;
   document.getElementById('dispStudentYears').innerText = `${selectedStudentForAccounts.admissionYear} / ${selectedStudentForAccounts.graduationYear}`;
 
+  // تحديث بطاقة الموقف المالي الشاملة
+  const totalFeeStr = Number(selectedStudentForAccounts.totalFee || 0).toLocaleString('ar-IQ') + ' د.ع';
+  const paidStr = Number(selectedStudentForAccounts.paidAmount || 0).toLocaleString('ar-IQ') + ' د.ع';
+  const remainingStr = Number(selectedStudentForAccounts.remainingAmount || 0).toLocaleString('ar-IQ') + ' د.ع';
+  const percentStr = (selectedStudentForAccounts.percent || 0) + '%';
+
+  document.getElementById('dispTotalFee').innerText = totalFeeStr;
+  document.getElementById('dispPaidAmount').innerText = paidStr;
+  document.getElementById('dispRemainingAmount').innerText = remainingStr;
+  document.getElementById('dispPaymentProgressPercent').innerText = percentStr;
+  document.getElementById('dispPaymentProgressBar').style.width = percentStr;
+
+  // شارة الحالة
   const statusPill = document.getElementById('selectedStudentStatusPill');
-  if (selectedStudentForAccounts.isPaid) {
-    statusPill.className = 'text-xs px-2.5 py-1 rounded-lg font-bold bg-emerald-100 text-emerald-800';
-    statusPill.innerText = 'تم التسديد';
+  if (selectedStudentForAccounts.status === 'تم التسديد بالكامل' || selectedStudentForAccounts.isPaid) {
+    statusPill.className = 'text-xs px-2.5 py-1 rounded-lg font-bold bg-emerald-100 text-emerald-800 border border-emerald-200';
+    statusPill.innerText = 'تم التسديد بالكامل ✓';
+  } else if (selectedStudentForAccounts.status === 'مسدد جزئياً') {
+    statusPill.className = 'text-xs px-2.5 py-1 rounded-lg font-bold bg-amber-100 text-amber-800 border border-amber-200';
+    statusPill.innerText = `مسدد جزئياً (${percentStr})`;
   } else {
-    statusPill.className = 'text-xs px-2.5 py-1 rounded-lg font-bold bg-amber-100 text-amber-800';
-    statusPill.innerText = 'لم يتم التسديد';
+    statusPill.className = 'text-xs px-2.5 py-1 rounded-lg font-bold bg-rose-50 text-rose-700 border border-rose-200';
+    statusPill.innerText = 'لم يتم التسديد بعد';
   }
 
-  // تعبئة بيانات الدفع الحالية إن وجدت
-  document.getElementById('inpPaymentAmount').value = selectedStudentForAccounts.paymentAmount || '';
-  document.getElementById('inpPaymentDate').value = selectedStudentForAccounts.paymentDate || new Date().toISOString().split('T')[0];
-  document.getElementById('inpAuditorName').value = selectedStudentForAccounts.auditorName || (currentUser?.name || '');
-
-  // معاينة صورة الوصل
-  currentReceiptBase64 = selectedStudentForAccounts.receiptImage || null;
+  // تصفير حقول إدخال الدفعة الجديدة
+  document.getElementById('inpPaymentAmount').value = '';
+  document.getElementById('inpPaymentDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('inpAuditorName').value = currentUser?.name || '';
+  currentReceiptBase64 = null;
   updateReceiptPreviewUI();
 
+  // عرض سجل وصولات الطالب
+  renderStudentPaymentsHistory(selectedStudentForAccounts);
+
   if (window.lucide) lucide.createIcons();
+}
+
+function renderStudentPaymentsHistory(student) {
+  const tbody = document.getElementById('studentPaymentsTableBody');
+  const countBadge = document.getElementById('dispPaymentsCountBadge');
+  if (!tbody) return;
+
+  const payments = Array.isArray(student.payments) ? student.payments : [];
+  if (countBadge) {
+    countBadge.innerText = `${payments.length} وصولات مسجلة`;
+  }
+
+  if (payments.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="p-6 text-center text-slate-400">
+          <p class="font-bold text-slate-500 mb-0.5">لا توجد حركات تسديد سابقة لهذا الطالب</p>
+          <p class="text-[11px]">يمكنك إضافة أول قسط أو وصل تسديد من النموذج أعلاه.</p>
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = payments.map((p, idx) => {
+    const receiptBtn = p.receiptImage
+      ? `<button type="button" onclick="openZoomModal('${p.receiptImage}')" class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 transition">
+          <i data-lucide="image" class="w-3 h-3"></i>
+          <span>معاينة الوصل</span>
+        </button>`
+      : `<span class="text-slate-400 text-[10px]">لا يوجد</span>`;
+
+    return `
+      <tr class="hover:bg-slate-50/80 transition">
+        <td class="p-2.5 font-bold text-slate-700">الدفعة #${payments.length - idx}</td>
+        <td class="p-2.5 font-extrabold text-indigo-700">${Number(p.amount).toLocaleString('ar-IQ')} د.ع</td>
+        <td class="p-2.5 text-slate-600 font-medium">${p.date || '-'}</td>
+        <td class="p-2.5 text-slate-600 font-medium">${p.auditor || '-'}</td>
+        <td class="p-2.5 text-center">${receiptBtn}</td>
+        <td class="p-2.5 text-center">
+          <button type="button" onclick="deletePaymentRecord('${student.id}', '${p.id}')" title="حذف هذه الدفعة" class="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function deletePaymentRecord(studentId, paymentId) {
+  const student = studentsList.find(s => s.id === studentId);
+  if (!student || !Array.isArray(student.payments)) return;
+
+  if (confirm('هل أنت متأكد من حذف حركة التسديد / الوصل هذا؟ سيتم إعادة احتساب الموقف المالي للطالب.')) {
+    student.payments = student.payments.filter(p => p.id !== paymentId);
+    calculateStudentFinancials(student);
+    saveToCache();
+    selectStudentForPayment(student.id);
+    renderStudentsTable();
+    updateStats();
+    syncStudentToGoogleSheet(student);
+    showAlert('تم حذف حركة التسديد وإعادة احتساب المتبقي بنجاح.', 'info');
+  }
 }
 
 function handleReceiptFileSelect(e) {
@@ -526,7 +736,6 @@ function handleReceiptFileSelect(e) {
     return;
   }
 
-  // تقليص حجم الصورة وتشفيرها لـ Base64 لسهولة الحفظ والمزامنة
   const reader = new FileReader();
   reader.onload = (event) => {
     currentReceiptBase64 = event.target.result;
@@ -558,7 +767,7 @@ function removeReceiptImage() {
   updateReceiptPreviewUI();
 }
 
-async function handleSavePayment(e) {
+function handleSavePayment(e) {
   e.preventDefault();
 
   if (!selectedStudentForAccounts) {
@@ -580,25 +789,36 @@ async function handleSavePayment(e) {
     return;
   }
 
-  // خطوة 1: تحديث فوري في الواجهة (Optimistic UI)
-  selectedStudentForAccounts.isPaid = true;
-  selectedStudentForAccounts.paymentAmount = amount;
+  const newPayment = {
+    id: 'PAY-' + Date.now().toString().slice(-6),
+    amount: Number(amount),
+    date: date,
+    auditor: auditor,
+    receiptImage: currentReceiptBase64,
+    createdAt: new Date().toLocaleDateString('ar-IQ') + ' ' + new Date().toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' })
+  };
+
+  if (!Array.isArray(selectedStudentForAccounts.payments)) {
+    selectedStudentForAccounts.payments = [];
+  }
+
+  selectedStudentForAccounts.payments.unshift(newPayment);
+  selectedStudentForAccounts.receiptImage = currentReceiptBase64 || selectedStudentForAccounts.receiptImage;
   selectedStudentForAccounts.paymentDate = date;
   selectedStudentForAccounts.auditorName = auditor;
-  selectedStudentForAccounts.receiptImage = currentReceiptBase64;
+
+  calculateStudentFinancials(selectedStudentForAccounts);
 
   saveToCache();
   renderAccountsStudentSelector();
   selectStudentForPayment(selectedStudentForAccounts.id);
-  showAlert(`جاري حفظ بيانات تسديد (${selectedStudentForAccounts.fullName}) في Google Sheet...`, 'info');
+  renderStudentsTable();
+  updateStats();
 
-  // خطوة 2: مزامنة مع Google Sheet في الخلفية
+  // مزامنة فورية في الخلفية مع Google Sheet
   syncStudentToGoogleSheet(selectedStudentForAccounts);
 
-  showAlert(`تم حفظ تسديد (${selectedStudentForAccounts.fullName}) بمبلغ ${Number(amount).toLocaleString('ar-IQ')} د.ع ومزامنته في الخلفية ✓`, 'success');
-
-  // خطوة 3: تأكيد الحفظ بعد ثانيتين
-  setTimeout(() => fetchStudentsFromGoogleSheet(false), 2000);
+  showAlert(`تمت إضافة دفعة جديدة بمبلغ ${Number(amount).toLocaleString('ar-IQ')} د.ع بنجاح! حالة الطالب الحالية: (${selectedStudentForAccounts.status}).`, 'success');
 }
 
 // ==========================================
@@ -609,13 +829,20 @@ function openZoomModal(target) {
   const img = document.getElementById('zoomModalImg');
 
   let src = target;
-  // فحص ما إذا كان الهدف هو ID طالب
-  const student = studentsList.find(s => s.id === target);
-  if (student && student.receiptImage) {
-    src = student.receiptImage;
+  if (!src) {
+    alert('لا توجد صورة وصل مرفقة.');
+    return;
   }
 
-  if (!src) {
+  // إذا تم تمرير معرف الطالب نبحث عن أحدث صورة وصل لديه
+  if (!src.startsWith('data:image') && !src.startsWith('http')) {
+    const student = studentsList.find(s => s.id === target);
+    if (student) {
+      src = (student.payments && student.payments.find(p => p.receiptImage)?.receiptImage) || student.receiptImage;
+    }
+  }
+
+  if (!src || (!src.startsWith('data:image') && !src.startsWith('http'))) {
     alert('لا توجد صورة وصل مرفقة لهذا الطالب.');
     return;
   }
@@ -633,17 +860,19 @@ function closeZoomModal() {
 // 10. تصدير وتنزيل ملفات PDF
 // ==========================================
 
-// أ) تنزيل استمارة وبراءة ذمة فردية للطالب مع الوصل
+// أ) تنزيل استمارة وبراءة ذمة فردية للطالب مع سجل الوصولات
 async function downloadStudentPDF(studentId) {
   const student = studentsList.find(s => s.id === studentId);
   if (!student) return;
+
+  calculateStudentFinancials(student);
 
   showAlert(`جاري إعداد وتحميل استمارة وبراءة ذمة الطالب (${student.fullName}) بصيغة PDF...`, 'info');
 
   // تعبئة قالب الطباعة المخفي
   document.getElementById('pdfDocId').innerText = student.id;
   document.getElementById('pdfDocDate').innerText = new Date().toLocaleDateString('ar-IQ');
-  document.getElementById('pdfDocStatus').innerText = student.isPaid ? 'تم التسديد' : 'لم يتم التسديد';
+  document.getElementById('pdfDocStatus').innerText = student.status || (student.isPaid ? 'تم التسديد بالكامل' : 'لم يتم التسديد');
 
   document.getElementById('pdfStudentName').innerText = student.fullName;
   document.getElementById('pdfStudentDept').innerText = student.department;
@@ -652,16 +881,35 @@ async function downloadStudentPDF(studentId) {
   document.getElementById('pdfStudentExpense').innerText = student.expenseType;
   document.getElementById('pdfStudentYears').innerText = `${student.admissionYear} / ${student.graduationYear}`;
 
-  document.getElementById('pdfPaymentAmount').innerText = student.paymentAmount ? Number(student.paymentAmount).toLocaleString('ar-IQ') + ' دينار عراقي' : 'غير مسدد بعد';
-  document.getElementById('pdfPaymentDate').innerText = student.paymentDate || 'لم يسدد بعد';
-  document.getElementById('pdfAuditorName').innerText = student.auditorName || '-';
-  document.getElementById('pdfAuditDate').innerText = student.paymentDate || '-';
+  document.getElementById('pdfTotalFee').innerText = Number(student.totalFee || 0).toLocaleString('ar-IQ') + ' د.ع';
+  document.getElementById('pdfPaidAmount').innerText = Number(student.paidAmount || 0).toLocaleString('ar-IQ') + ' د.ع';
+  document.getElementById('pdfRemainingAmount').innerText = Number(student.remainingAmount || 0).toLocaleString('ar-IQ') + ' د.ع';
+  document.getElementById('pdfPaymentStatusText').innerText = student.status || 'لم يتم التسديد';
 
+  // ملء جدول الدفعات والوصولات
+  const paymentsTbody = document.getElementById('pdfPaymentsTableBody');
+  const payments = Array.isArray(student.payments) ? student.payments : [];
+
+  if (payments.length === 0) {
+    paymentsTbody.innerHTML = `<tr><td colspan="4" class="p-2 text-center text-slate-400">لا توجد وصولات تسديد مسجلة</td></tr>`;
+  } else {
+    paymentsTbody.innerHTML = payments.map((p, idx) => `
+      <tr class="border-b border-slate-200">
+        <td class="p-1.5 border border-slate-300 font-bold">الدفعة #${payments.length - idx}</td>
+        <td class="p-1.5 border border-slate-300 font-extrabold text-indigo-900">${Number(p.amount).toLocaleString('ar-IQ')} د.ع</td>
+        <td class="p-1.5 border border-slate-300">${p.date || '-'}</td>
+        <td class="p-1.5 border border-slate-300">${p.auditor || '-'}</td>
+      </tr>
+    `).join('');
+  }
+
+  // صورة الوصل (أحدث صورة وصل)
   const receiptImg = document.getElementById('pdfReceiptImage');
   const noReceipt = document.getElementById('pdfNoReceiptPlaceholder');
+  const latestReceipt = (payments.find(p => p.receiptImage)?.receiptImage) || student.receiptImage;
 
-  if (student.receiptImage) {
-    receiptImg.src = student.receiptImage;
+  if (latestReceipt) {
+    receiptImg.src = latestReceipt;
     receiptImg.classList.remove('hidden');
     noReceipt.classList.add('hidden');
   } else {
@@ -702,7 +950,6 @@ async function exportAllStudentsPDF() {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF('landscape', 'mm', 'a4');
 
-  // سنقوم بإنشاء عنصر مؤقت يحتوي على جدول التقرير الأنيق
   const tempDiv = document.createElement('div');
   tempDiv.style.position = 'absolute';
   tempDiv.style.left = '-9999px';
@@ -722,37 +969,38 @@ async function exportAllStudentsPDF() {
     <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: right;">
       <thead>
         <tr style="background-color: #0f766e; color: #ffffff;">
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">ت</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1; text-align: center;">ت</th>
           <th style="padding: 8px; border: 1px solid #cbd5e1;">اسم الطالب الرباعي</th>
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">القسم</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1;">القسم والتخصص</th>
           <th style="padding: 8px; border: 1px solid #cbd5e1;">نوع الدراسة</th>
           <th style="padding: 8px; border: 1px solid #cbd5e1;">النفقة</th>
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">سنة القبول</th>
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">الحالة</th>
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">المبلغ المسدد</th>
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">تاريخ التسديد</th>
-          <th style="padding: 8px; border: 1px solid #cbd5e1;">المدقق المسؤول</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1;">المبلغ المقرر</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1;">إجمالي المسدد</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1;">المتبقي</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1; text-align: center;">الحالة</th>
+          <th style="padding: 8px; border: 1px solid #cbd5e1; text-align: center;">الوصولات</th>
         </tr>
       </thead>
       <tbody>
-        ${studentsList.map((s, i) => `
-          <tr style="background-color: ${i % 2 === 0 ? '#f8fafc' : '#ffffff'};">
-            <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center;">${i + 1}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1; font-weight: bold;">${s.fullName}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.department}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.studyType}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.expenseType}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center;">${s.admissionYear}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center; color: ${s.isPaid ? '#047857' : '#b45309'}; font-weight: bold;">
-              ${s.isPaid ? 'تم التسديد' : 'بانتظار التسديد'}
-            </td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1; font-weight: bold;">
-              ${s.paymentAmount ? Number(s.paymentAmount).toLocaleString('ar-IQ') + ' د.ع' : '-'}
-            </td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center;">${s.paymentDate || '-'}</td>
-            <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.auditorName || '-'}</td>
-          </tr>
-        `).join('')}
+        ${studentsList.map((s, i) => {
+          calculateStudentFinancials(s);
+          return `
+            <tr style="background-color: ${i % 2 === 0 ? '#f8fafc' : '#ffffff'};">
+              <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center;">${i + 1}</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1; font-weight: bold;">${s.fullName}</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.department} - ${s.specialization}</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.studyType}</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1;">${s.expenseType}</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1; font-weight: bold;">${Number(s.totalFee || 0).toLocaleString('ar-IQ')} د.ع</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1; font-weight: bold; color: #059669;">${Number(s.paidAmount || 0).toLocaleString('ar-IQ')} د.ع</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1; font-weight: bold; color: ${s.remainingAmount > 0 ? '#b45309' : '#64748b'};">${Number(s.remainingAmount || 0).toLocaleString('ar-IQ')} د.ع</td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold; color: ${s.status === 'تم التسديد بالكامل' || s.isPaid ? '#047857' : (s.status === 'مسدد جزئياً' ? '#b45309' : '#e11d48')};">
+                ${s.status || 'لم يتم التسديد'}
+              </td>
+              <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center;">${s.payments ? s.payments.length : 0} وصولات</td>
+            </tr>
+          `;
+        }).join('')}
       </tbody>
     </table>
 
@@ -792,6 +1040,8 @@ function exportToExcel() {
     return;
   }
 
+  studentsList.forEach(s => calculateStudentFinancials(s));
+
   const excelRows = studentsList.map((s, idx) => ({
     "ت": idx + 1,
     "معرف الطالب": s.id,
@@ -802,12 +1052,14 @@ function exportToExcel() {
     "التخصص": s.specialization,
     "سنة القبول": s.admissionYear,
     "سنة التخرج": s.graduationYear,
-    "حالة التسديد": s.isPaid ? "تم التسديد" : "لم يتم التسديد",
-    "المبلغ المسدد (د.ع)": s.paymentAmount ? Number(s.paymentAmount) : 0,
-    "تاريخ التسديد": s.paymentDate || "",
+    "المبلغ المقرر الأصلي (د.ع)": s.totalFee || 0,
+    "إجمالي المسدد (د.ع)": s.paidAmount || 0,
+    "المبلغ المتبقي (د.ع)": s.remainingAmount || 0,
+    "حالة التسديد": s.status || (s.isPaid ? "تم التسديد بالكامل" : "لم يتم التسديد"),
+    "عدد الوصولات": s.payments ? s.payments.length : 0,
+    "تاريخ آخر تسديد": s.paymentDate || "",
     "المدقق": s.auditorName || "",
-    "تاريخ الإضافة": s.createdAt,
-    "حالة صورة الوصل": s.receiptImage ? "تم رفع الوصل" : "غير مرفق"
+    "تاريخ الإضافة": s.createdAt
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(excelRows);
@@ -816,7 +1068,7 @@ function exportToExcel() {
 
   // تنزيل الملف
   XLSX.writeFile(workbook, `سجل_طلبة_الدراسات_العليا_والتسديدات_${new Date().toISOString().split('T')[0]}.xlsx`);
-  showAlert('تم تصدير الملف !', 'success');
+  showAlert('تم تصدير ملف Excel بنجاح!', 'success');
 }
 
 // ==========================================
@@ -979,15 +1231,9 @@ function parseStudentsFromScript(jsonData) {
     // تجاهل صفوف الاختبار
     if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST') || id.startsWith('NON_EXISTENT')) continue;
 
-    const isPaid = String(row.status || '').includes('تم التسديد');
-    const paymentAmount = String(row.paymentAmount || '')
-      .replace(' د.ع', '').replace(/,/g, '').trim();
-    const paymentDate = String(row.paymentDate || '');
-    const auditorName = String(row.auditorName || '');
-    const createdAt = String(row.createdAt || '');
-
     const existing = studentsList.find(s => s.id === id);
-    result.push({
+
+    const studentObj = {
       id,
       fullName,
       expenseType: String(row.expenseType || ''),
@@ -996,13 +1242,19 @@ function parseStudentsFromScript(jsonData) {
       specialization: String(row.specialization || ''),
       admissionYear: String(row.admissionYear || ''),
       graduationYear: String(row.graduationYear || ''),
-      isPaid,
-      paymentAmount: (paymentAmount === '-' || paymentAmount === '' || paymentAmount === '0') ? '' : paymentAmount,
-      paymentDate: paymentDate === '-' ? '' : paymentDate,
-      auditorName: auditorName === '-' ? '' : auditorName,
-      createdAt: createdAt || new Date().toLocaleDateString('ar-IQ'),
+      totalFee: Number(String(row.totalFee || 0).replace(/[^\d.]/g, '')) || 0,
+      paidAmount: Number(String(row.paidAmount || 0).replace(/[^\d.]/g, '')) || 0,
+      remainingAmount: Number(String(row.remainingAmount || 0).replace(/[^\d.]/g, '')) || 0,
+      status: String(row.status || ''),
+      paymentDate: String(row.paymentDate || ''),
+      auditorName: String(row.auditorName || ''),
+      createdAt: String(row.createdAt || '') || new Date().toLocaleDateString('ar-IQ'),
+      payments: Array.isArray(row.payments) ? row.payments : (existing?.payments || []),
       receiptImage: existing ? existing.receiptImage : null
-    });
+    };
+
+    calculateStudentFinancials(studentObj);
+    result.push(studentObj);
   }
   return result;
 }
@@ -1021,11 +1273,9 @@ async function fetchViaGViz() {
   const data = JSON.parse(jsonStr);
   const rows = data.table?.rows || [];
 
-  // دالة مساعدة لتحويل صيغة تاريخ GViz
   const parseGVizDate = (val) => {
     if (!val) return '';
     const s = String(val);
-    // تحويل Date(YYYY,M,D) إلى YYYY-MM-DD
     const m = s.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})\)$/);
     if (m) {
       return `${m[1]}-${String(Number(m[2])+1).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
@@ -1048,14 +1298,44 @@ async function fetchViaGViz() {
     // تجاهل صفوف الاختبار وأي صف فارغ
     if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST') || id.startsWith('NON_EXISTENT')) continue;
 
-    const statusText = String(getVal(8) || '');
-    const isPaid = statusText.includes('تم التسديد');
-    const paymentAmount = String(getVal(9) || '').replace(' د.ع', '').replace(/,/g, '').trim();
-    const rawPayDate = getVal(10);
-    const rawCreatedAt = getVal(12);
-
     const existing = studentsList.find(s => s.id === id);
-    result.push({
+
+    // فحص ما إذا كان الصف بنسق 17 عمود الجديد أو 14 عمود القديم
+    const val8 = String(getVal(8) || '');
+    let totalFee = 0;
+    let paidAmount = 0;
+    let remainingAmount = 0;
+    let statusText = '';
+    let payDate = '';
+    let auditor = '';
+    let createdAt = '';
+    let paymentsArr = existing?.payments || [];
+
+    if (val8.includes('تسديد') || val8.includes('التسديد')) {
+      // نسق 14 عمود القديم
+      statusText = val8;
+      paidAmount = Number(String(getVal(9) || '').replace(/[^\d.]/g, '')) || 0;
+      totalFee = paidAmount; // افتراضياً
+      payDate = parseGVizDate(getVal(10));
+      auditor = String(getVal(11) || '');
+      createdAt = parseGVizDate(getVal(12));
+    } else {
+      // نسق 17 عمود الموسع
+      totalFee = Number(String(getVal(8) || '').replace(/[^\d.]/g, '')) || 0;
+      paidAmount = Number(String(getVal(9) || '').replace(/[^\d.]/g, '')) || 0;
+      remainingAmount = Number(String(getVal(10) || '').replace(/[^\d.]/g, '')) || 0;
+      statusText = String(getVal(11) || '');
+      payDate = parseGVizDate(getVal(12));
+      auditor = String(getVal(13) || '');
+      createdAt = parseGVizDate(getVal(14));
+
+      const paymentsJsonRaw = String(getVal(16) || '');
+      if (paymentsJsonRaw.startsWith('[') && paymentsArr.length === 0) {
+        try { paymentsArr = JSON.parse(paymentsJsonRaw); } catch(e) {}
+      }
+    }
+
+    const studentObj = {
       id,
       fullName,
       expenseType: String(getVal(2) || ''),
@@ -1064,13 +1344,19 @@ async function fetchViaGViz() {
       specialization: String(getVal(5) || ''),
       admissionYear: String(getVal(6) || ''),
       graduationYear: String(getVal(7) || ''),
-      isPaid,
-      paymentAmount: (paymentAmount === '-' || paymentAmount === '' || paymentAmount === '0') ? '' : paymentAmount,
-      paymentDate: parseGVizDate(rawPayDate) === '-' ? '' : parseGVizDate(rawPayDate),
-      auditorName: String(getVal(11) || '') === '-' ? '' : String(getVal(11) || ''),
-      createdAt: parseGVizDate(rawCreatedAt) || new Date().toLocaleDateString('ar-IQ'),
+      totalFee,
+      paidAmount,
+      remainingAmount,
+      status: statusText,
+      paymentDate: payDate === '-' ? '' : payDate,
+      auditorName: auditor === '-' ? '' : auditor,
+      createdAt: createdAt || new Date().toLocaleDateString('ar-IQ'),
+      payments: paymentsArr,
       receiptImage: existing ? existing.receiptImage : null
-    });
+    };
+
+    calculateStudentFinancials(studentObj);
+    result.push(studentObj);
   }
   return result;
 }
@@ -1079,22 +1365,24 @@ async function fetchViaGViz() {
 // 13. تحديث الإحصائيات والإشعارات
 // ==========================================
 function updateStats() {
+  studentsList.forEach(s => calculateStudentFinancials(s));
+
   const total = studentsList.length;
-  const paid = studentsList.filter(s => s.isPaid).length;
-  const pending = total - paid;
+  const fullyPaid = studentsList.filter(s => s.status === 'تم التسديد بالكامل' || s.isPaid).length;
+  const partialPaid = studentsList.filter(s => s.status === 'مسدد جزئياً').length;
   
   const totalAmount = studentsList.reduce((acc, curr) => {
-    return acc + (Number(curr.paymentAmount) || 0);
+    return acc + (Number(curr.paidAmount) || 0);
   }, 0);
 
   const elTotal = document.getElementById('statTotalStudents');
   const elPaid = document.getElementById('statPaidCount');
-  const elPending = document.getElementById('statPendingCount');
+  const elPartial = document.getElementById('statPartialCount');
   const elAmount = document.getElementById('statTotalAmount');
 
   if (elTotal) elTotal.innerText = total;
-  if (elPaid) elPaid.innerText = paid;
-  if (elPending) elPending.innerText = pending;
+  if (elPaid) elPaid.innerText = fullyPaid;
+  if (elPartial) elPartial.innerText = partialPaid;
   if (elAmount) elAmount.innerText = totalAmount.toLocaleString('ar-IQ') + ' د.ع';
 }
 
