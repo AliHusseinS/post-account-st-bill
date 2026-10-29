@@ -9,7 +9,7 @@ const GOOGLE_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1U6qpwnVt
 const GOOGLE_SPREADSHEET_ID = "1U6qpwnVtTDf-K7OpwNWtI-seN7bN2GaDwfYT2m2SL60";
 
 // رابط Google Apps Script Web App المعتمد للمزامنة التلقائية
-const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbw23stuQw45daQUxzl5wv53SF3sAFlj0SJkkeEU8Q8MX5UBt-cHpYxt81Yi1cxH1G60/exec";
+const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbwKjJN7sPgj8_b0JDBS-CK_jK4GAINsFRubLUukKvaIORVOXmDh2y7uesERj6cPJDVi/exec";
 
 const USERS = {
   postgrad: {
@@ -281,6 +281,9 @@ function handleCreateStudent(e) {
   showAlert(`تمت إضافة الطالب (${fullName}) بنجاح وإحالته لقسم الحسابات للتدقيق والتسديد.`, 'success');
   
   switchPgTab('list');
+  
+  // جلب من الشيت بعد 5 ثوانٍ لتأكيد المزامنة (دون مسح الطالب المضاف للتو)
+  setTimeout(() => fetchStudentsFromGoogleSheet(false), 5000);
 }
 
 // ==========================================
@@ -397,10 +400,30 @@ function deleteStudent(id) {
   if (!student) return;
 
   if (confirm(`هل أنت متأكد من حذف سجل الطالب: ${student.fullName}؟`)) {
+    // أولاً: حذفه من Google Sheet
+    deleteStudentFromGoogleSheet(id, student.fullName);
+    // ثانياً: حذفه من الذاكرة المحلية والواجهة
     studentsList = studentsList.filter(s => s.id !== id);
     saveStudents();
     renderStudentsTable();
-    showAlert('تم حذف سجل الطالب بنجاح.', 'info');
+    renderAccountsStudentSelector();
+    updateStats();
+    showAlert(`تم حذف سجل الطالب (${student.fullName}) من النظام ومن Google Sheet.`, 'info');
+  }
+}
+
+async function deleteStudentFromGoogleSheet(studentId, studentName) {
+  const webhookUrl = getActiveWebhookUrl();
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'delete', id: studentId })
+    });
+    console.log(`تم إرسال طلب حذف الطالب ${studentName} من Google Sheet`);
+  } catch (err) {
+    console.warn('تعذر حذف الطالب من Google Sheet:', err);
   }
 }
 
@@ -887,30 +910,38 @@ async function testGoogleSheetSync() {
 // ==========================================
 async function fetchStudentsFromGoogleSheet(showNotification = false) {
   try {
-    // استخدام Google Apps Script doGet مباشرةً لضمان دقة البيانات
-    const webhookUrl = getActiveWebhookUrl();
-    const resp = await fetch(webhookUrl + '?action=getStudents', {
-      method: 'GET',
-      mode: 'cors'
-    });
-
     let fetchedStudents = [];
 
-    if (resp.ok) {
-      // doGet أعاد بيانات JSON صحيحة
-      const jsonData = await resp.json();
-      if (Array.isArray(jsonData) && jsonData.length > 0) {
-        fetchedStudents = parseStudentsFromScript(jsonData);
+    // محاولة 1: Google Apps Script doGet (أكثر دقة وسرعة)
+    try {
+      const webhookUrl = getActiveWebhookUrl();
+      const resp = await fetch(webhookUrl, { method: 'GET', mode: 'cors' });
+      if (resp.ok) {
+        const jsonData = await resp.json();
+        if (Array.isArray(jsonData) && jsonData.length > 0) {
+          fetchedStudents = parseStudentsFromScript(jsonData);
+        }
       }
+    } catch (e) {
+      console.warn('doGet فشل، سنجرب GViz:', e);
     }
 
-    // احتياطياً: استخدام GViz API إن فشل doGet
+    // محاولة 2: GViz API احتياطي
     if (fetchedStudents.length === 0) {
       fetchedStudents = await fetchViaGViz();
     }
 
-    if (fetchedStudents.length > 0) {
-      studentsList = fetchedStudents;
+    // دمج البيانات القادمة من الشيت مع البيانات المحلية بذكاء:
+    // - الطلاب الموجودون في الشيت: نحدث بياناتهم ونحتفظ بصورة الوصل المحلية
+    // - الطلاب الموجودون محلياً فقط (أُضيفوا للتو ولم يصلوا للشيت بعد): نحتفظ بهم
+    const sheetIds = new Set(fetchedStudents.map(s => s.id));
+    const localOnlyStudents = studentsList.filter(s => !sheetIds.has(s.id));
+
+    // دمج: بيانات الشيت + الطلاب المحليين فقط
+    const merged = [...fetchedStudents, ...localOnlyStudents];
+
+    if (merged.length > 0) {
+      studentsList = merged;
       saveStudents();
       renderStudentsTable();
       renderAccountsStudentSelector();
@@ -924,22 +955,6 @@ async function fetchStudentsFromGoogleSheet(showNotification = false) {
     }
   } catch (err) {
     console.warn('تعذر جلب البيانات من Google Sheet:', err);
-    // محاولة أخيرة عبر GViz
-    try {
-      const fetchedStudents = await fetchViaGViz();
-      if (fetchedStudents.length > 0) {
-        studentsList = fetchedStudents;
-        saveStudents();
-        renderStudentsTable();
-        renderAccountsStudentSelector();
-        updateStats();
-        if (showNotification) {
-          showAlert(`تم تحديث ${fetchedStudents.length} طالب من Google Sheet ✓`, 'success');
-        }
-      }
-    } catch (e2) {
-      console.warn('فشل GViz أيضاً:', e2);
-    }
   }
 }
 
