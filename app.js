@@ -220,7 +220,7 @@ async function saveStudent(student) {
     await fetch(SCRIPT_URL, {
       method: 'POST',
       mode:   'no-cors',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: 'save', student })
     });
   } catch (err) {
