@@ -9,7 +9,7 @@ const GOOGLE_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1U6qpwnVt
 const GOOGLE_SPREADSHEET_ID = "1U6qpwnVtTDf-K7OpwNWtI-seN7bN2GaDwfYT2m2SL60";
 
 // رابط Google Apps Script Web App المعتمد للمزامنة التلقائية
-const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbwKjJN7sPgj8_b0JDBS-CK_jK4GAINsFRubLUukKvaIORVOXmDh2y7uesERj6cPJDVi/exec";
+const GOOGLE_SCRIPT_WEBHOOK = "https://script.google.com/macros/s/AKfycbxqC-EvruQytQK3fgJMwhKGkOQFo7KKC_pGSuFPPYw1W32whJ6g0E1ESVAe5Y1pE19Q/exec";
 
 const USERS = {
   postgrad: {
@@ -44,32 +44,25 @@ let currentReceiptBase64 = null;
 // 3. تهيئة النظام والبدء (Initialization)
 // ==========================================
 window.addEventListener('DOMContentLoaded', () => {
-  // التأكد من ضبط رابط Google Apps Script Web App الصحيح
-  const savedSheetUrl = localStorage.getItem('google_sheet_webhook_url');
-  if (!savedSheetUrl || !savedSheetUrl.startsWith('https://script.google.com/macros/s/')) {
-    localStorage.setItem('google_sheet_webhook_url', GOOGLE_SCRIPT_WEBHOOK);
-  }
+  // ضبط رابط Google Apps Script
+  localStorage.setItem('google_sheet_webhook_url', GOOGLE_SCRIPT_WEBHOOK);
   if (document.getElementById('inpGoogleSheetUrl')) {
     document.getElementById('inpGoogleSheetUrl').value = GOOGLE_SCRIPT_WEBHOOK;
   }
 
-  // تحميل الطلبة من التخزين المحلي
-  loadStudents();
-  
-  // جلب ومزامنة أحدث بيانات الطلبة من Google Sheet تلقائياً عند فتح الموقع
-  fetchStudentsFromGoogleSheet();
-  
+  // تحميل البيانات من الكاش المحلي أولاً للعرض السريع
+  loadFromCache();
+
+  // جلب فوري من Google Sheet ليكون هو المصدر الحي المعتمد في أي متصفح
+  fetchStudentsFromGoogleSheet(false);
+
   // تهيئة الأيقونات
-  if (window.lucide) {
-    lucide.createIcons();
-  }
-  
-  // ضبط تاريخ اليوم الافتراضي لحقل التسديد
+  if (window.lucide) lucide.createIcons();
+
+  // ضبط تاريخ اليوم لحقل التسديد
   const today = new Date().toISOString().split('T')[0];
   const dateInput = document.getElementById('inpPaymentDate');
-  if (dateInput) {
-    dateInput.value = today;
-  }
+  if (dateInput) dateInput.value = today;
 
   // فحص الجلسة السابقة
   const savedUser = localStorage.getItem('postgrad_current_user');
@@ -83,34 +76,28 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-function loadStudents() {
-  const saved = localStorage.getItem('postgrad_students_data');
-  if (saved) {
-    try {
-      let list = JSON.parse(saved);
-      // إزالة وحذف الطلاب التجريبيين الافتراضيين نهائياً من ذاكرة المتصفح
-      studentsList = list.filter(s => 
-        s.id !== 'STU-2024-001' && 
-        s.id !== 'STU-2024-002' && 
-        s.id !== 'STU-2024-003' &&
-        !s.fullName.includes('حيدر علي جاسم') &&
-        !s.fullName.includes('فاطمة محمد باقر') &&
-        !s.fullName.includes('كرار عبد الرضا')
-      );
-    } catch (e) {
-      studentsList = [];
-    }
-  } else {
-    studentsList = [];
-  }
-  saveStudents();
-  updateStats();
+// -------------------------------------------------------
+// localStorage = كاش فقط للعرض السريع
+// Google Sheet = المصدر الوحيد الحقيقي للبيانات
+// -------------------------------------------------------
+function saveToCache() {
+  localStorage.setItem('postgrad_students_data', JSON.stringify(studentsList));
 }
 
-function saveStudents() {
-  localStorage.setItem('postgrad_students_data', JSON.stringify(studentsList));
-  updateStats();
+function loadFromCache() {
+  try {
+    const saved = localStorage.getItem('postgrad_students_data');
+    if (saved) studentsList = JSON.parse(saved);
+    else studentsList = [];
+  } catch (e) {
+    studentsList = [];
+  }
 }
+
+// للتوافق مع أي استدعاء قديم
+function loadStudents() { loadFromCache(); updateStats(); }
+function saveStudents() { saveToCache(); updateStats(); }
+
 
 // ==========================================
 // 4. نظام تسجيل الدخول والصلاحيات
@@ -181,19 +168,23 @@ function applyLoginSuccess() {
     iconBox.innerHTML = '<i data-lucide="building-2" class="w-3.5 h-3.5"></i>';
     document.getElementById('viewPostgrad').classList.remove('hidden');
     document.getElementById('viewAccounts').classList.add('hidden');
-    renderStudentsTable();
   } else {
     iconBox.className = 'w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs';
     iconBox.innerHTML = '<i data-lucide="receipt" class="w-3.5 h-3.5"></i>';
     document.getElementById('viewPostgrad').classList.add('hidden');
     document.getElementById('viewAccounts').classList.remove('hidden');
-    renderAccountsStudentSelector();
   }
   
   if (window.lucide) lucide.createIcons();
-  
-  // تحديث فوري وجلب أحدث بيانات الطلبة والتسديدات من Google Sheet
-  fetchStudentsFromGoogleSheet();
+
+  // خطوة 1: اعرض الكاش المحلي فوراً (لو موجود)
+  loadFromCache();
+  renderStudentsTable();
+  renderAccountsStudentSelector();
+  updateStats();
+
+  // خطوة 2: جلب أحدث البيانات من Google Sheet (المصدر الحقيقي)
+  fetchStudentsFromGoogleSheet(false);
 }
 
 function handleLogout() {
@@ -230,7 +221,7 @@ function switchPgTab(tab) {
 // ==========================================
 // 6. إضافة طالب جديد (قسم الدراسات العليا فقط)
 // ==========================================
-function handleCreateStudent(e) {
+async function handleCreateStudent(e) {
   e.preventDefault();
   
   if (currentUser?.role !== 'postgrad') {
@@ -238,23 +229,24 @@ function handleCreateStudent(e) {
     return;
   }
 
-  const fullName = document.getElementById('inpFullName').value.trim();
-  const expenseType = document.getElementById('inpExpenseType').value;
-  const department = document.getElementById('inpDepartment').value.trim();
-  const studyType = document.getElementById('inpStudyType').value;
+  const fullName     = document.getElementById('inpFullName').value.trim();
+  const expenseType  = document.getElementById('inpExpenseType').value;
+  const department   = document.getElementById('inpDepartment').value.trim();
+  const studyType    = document.getElementById('inpStudyType').value;
   const specialization = document.getElementById('inpSpecialization').value.trim();
-  const admissionYear = document.getElementById('inpAdmissionYear').value.trim();
+  const admissionYear  = document.getElementById('inpAdmissionYear').value.trim();
   const graduationYear = document.getElementById('inpGraduationYear').value.trim();
 
-  // التحقق من أن الاسم رباعي
   const nameParts = fullName.split(/\s+/).filter(Boolean);
   if (nameParts.length < 3) {
     alert('يرجى إدخال اسم الطالب ثلاثياً أو رباعياً على الأقل.');
     return;
   }
 
+  // توليد ID فريد بالوقت لتجنب التكرار
+  const newId = 'STU-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-5);
   const newStudent = {
-    id: 'STU-' + new Date().getFullYear() + '-' + String(studentsList.length + 1).padStart(3, '0'),
+    id: newId,
     fullName,
     expenseType,
     department,
@@ -270,20 +262,21 @@ function handleCreateStudent(e) {
     receiptImage: null
   };
 
+  // --- خطوة 1: أضفه للواجهة فوراً (Optimistic UI) ---
   studentsList.unshift(newStudent);
-  saveStudents();
-  
-  // مزامنة فورية مع Google Sheet
-  syncStudentToGoogleSheet(newStudent);
-
-  // إعادة ضبط النموذج
+  saveToCache();
+  renderStudentsTable();
+  renderAccountsStudentSelector();
+  updateStats();
   document.getElementById('newStudentForm').reset();
-  showAlert(`تمت إضافة الطالب (${fullName}) بنجاح وإحالته لقسم الحسابات للتدقيق والتسديد.`, 'success');
-  
+  showAlert(`جاري حفظ الطالب (${fullName}) في Google Sheet...`, 'info');
   switchPgTab('list');
-  
-  // جلب من الشيت بعد 5 ثوانٍ لتأكيد المزامنة (دون مسح الطالب المضاف للتو)
-  setTimeout(() => fetchStudentsFromGoogleSheet(false), 5000);
+
+  // --- خطوة 2: أرسله لـ Google Sheet ---
+  await syncStudentToGoogleSheet(newStudent);
+
+  // --- خطوة 3: بعد 3 ثوانٍ اجلب من الشيت لتأكيد الحفظ ---
+  setTimeout(() => fetchStudentsFromGoogleSheet(false), 3000);
 }
 
 // ==========================================
@@ -395,33 +388,44 @@ function renderStudentsTable() {
   if (window.lucide) lucide.createIcons();
 }
 
-function deleteStudent(id) {
+async function deleteStudent(id) {
   const student = studentsList.find(s => s.id === id);
   if (!student) return;
 
   if (confirm(`هل أنت متأكد من حذف سجل الطالب: ${student.fullName}؟`)) {
-    // أولاً: حذفه من Google Sheet
-    deleteStudentFromGoogleSheet(id, student.fullName);
-    // ثانياً: حذفه من الذاكرة المحلية والواجهة
+    // خطوة 1: حذف فوري من الواجهة (Optimistic UI)
     studentsList = studentsList.filter(s => s.id !== id);
-    saveStudents();
+    saveToCache();
     renderStudentsTable();
     renderAccountsStudentSelector();
     updateStats();
-    showAlert(`تم حذف سجل الطالب (${student.fullName}) من النظام ومن Google Sheet.`, 'info');
+    showAlert(`جاري حذف (${student.fullName}) من Google Sheet...`, 'info');
+
+    // خطوة 2: إرسال طلب الحذف لـ Google Sheet
+    await deleteStudentFromGoogleSheet(id);
+
+    // خطوة 3: تأكيد الحذف بجلب البيانات من الشيت بعد 3 ثوانٍ
+    setTimeout(() => fetchStudentsFromGoogleSheet(false), 3000);
+
+    showAlert(`تم حذف (${student.fullName}) من النظام ومن Google Sheet ✓`, 'info');
   }
 }
 
-async function deleteStudentFromGoogleSheet(studentId, studentName) {
+async function deleteStudentFromGoogleSheet(studentId) {
   const webhookUrl = getActiveWebhookUrl();
   try {
-    await fetch(webhookUrl, {
+    // 1. إرسال طلب الحذف عبر POST
+    fetch(webhookUrl, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: 'delete', id: studentId })
-    });
-    console.log(`تم إرسال طلب حذف الطالب ${studentName} من Google Sheet`);
+    }).catch(e => console.warn('POST delete error:', e));
+
+    // 2. إرسال احتياطي فوري عبر GET (مضمون 100% ولا يتأثر بأي قيود CORS)
+    const getUrl = webhookUrl + (webhookUrl.includes('?') ? '&' : '?') + 'action=delete&id=' + encodeURIComponent(studentId);
+    await fetch(getUrl, { mode: 'no-cors' });
+    console.log(`تم إرسال طلب حذف الطالب (${studentId}) إلى Google Sheet بنجاح`);
   } catch (err) {
     console.warn('تعذر حذف الطالب من Google Sheet:', err);
   }
@@ -556,7 +560,7 @@ function removeReceiptImage() {
   updateReceiptPreviewUI();
 }
 
-function handleSavePayment(e) {
+async function handleSavePayment(e) {
   e.preventDefault();
 
   if (!selectedStudentForAccounts) {
@@ -564,8 +568,8 @@ function handleSavePayment(e) {
     return;
   }
 
-  const amount = document.getElementById('inpPaymentAmount').value.trim();
-  const date = document.getElementById('inpPaymentDate').value;
+  const amount  = document.getElementById('inpPaymentAmount').value.trim();
+  const date    = document.getElementById('inpPaymentDate').value;
   const auditor = document.getElementById('inpAuditorName').value.trim();
 
   if (!amount || Number(amount) <= 0) {
@@ -578,22 +582,25 @@ function handleSavePayment(e) {
     return;
   }
 
-  // تحديث سجل الطالب في الذاكرة
+  // خطوة 1: تحديث فوري في الواجهة (Optimistic UI)
   selectedStudentForAccounts.isPaid = true;
   selectedStudentForAccounts.paymentAmount = amount;
   selectedStudentForAccounts.paymentDate = date;
   selectedStudentForAccounts.auditorName = auditor;
   selectedStudentForAccounts.receiptImage = currentReceiptBase64;
 
-  // حفظ في التخزين المحلي
-  saveStudents();
+  saveToCache();
   renderAccountsStudentSelector();
   selectStudentForPayment(selectedStudentForAccounts.id);
+  showAlert(`جاري حفظ بيانات تسديد (${selectedStudentForAccounts.fullName}) في Google Sheet...`, 'info');
 
-  // مزامنة إلى Google Sheet
-  syncStudentToGoogleSheet(selectedStudentForAccounts);
+  // خطوة 2: مزامنة مع Google Sheet
+  await syncStudentToGoogleSheet(selectedStudentForAccounts);
 
-  showAlert(`تم حفظ وتدقيق وصل الطالب (${selectedStudentForAccounts.fullName}) بنجاح بمبلغ ${Number(amount).toLocaleString('ar-IQ')} د.ع ومزامنته مع Google Sheet.`, 'success');
+  showAlert(`تم حفظ تسديد (${selectedStudentForAccounts.fullName}) بمبلغ ${Number(amount).toLocaleString('ar-IQ')} د.ع في Google Sheet ✓`, 'success');
+
+  // خطوة 3: تأكيد الحفظ بجلب البيانات من الشيت
+  setTimeout(() => fetchStudentsFromGoogleSheet(false), 3000);
 }
 
 // ==========================================
@@ -906,55 +913,62 @@ async function testGoogleSheetSync() {
 }
 
 // ==========================================
-// 12. جلب أحدث البيانات ومزامنتها مباشرة من Google Sheet
+// 12. جلب البيانات من Google Sheet — المصدر الوحيد للحقيقة
 // ==========================================
 async function fetchStudentsFromGoogleSheet(showNotification = false) {
+  let fetchedStudents = null;
+
+  // --- المحاولة الأولى: doGet عبر Google Apps Script ---
   try {
-    let fetchedStudents = [];
+    const webhookUrl = getActiveWebhookUrl();
+    const resp = await fetch(webhookUrl, { method: 'GET' });
+    if (resp.ok) {
+      const jsonData = await resp.json();
+      if (Array.isArray(jsonData)) {
+        fetchedStudents = parseStudentsFromScript(jsonData);
+      }
+    }
+  } catch (err1) {
+    console.warn('doGet فشل، سنجرب GViz:', err1);
+  }
 
-    // محاولة 1: Google Apps Script doGet (أكثر دقة وسرعة)
+  // --- المحاولة الثانية: GViz API (احتياطي) ---
+  if (fetchedStudents === null) {
     try {
-      const webhookUrl = getActiveWebhookUrl();
-      const resp = await fetch(webhookUrl, { method: 'GET', mode: 'cors' });
-      if (resp.ok) {
-        const jsonData = await resp.json();
-        if (Array.isArray(jsonData) && jsonData.length > 0) {
-          fetchedStudents = parseStudentsFromScript(jsonData);
-        }
-      }
-    } catch (e) {
-      console.warn('doGet فشل، سنجرب GViz:', e);
-    }
-
-    // محاولة 2: GViz API احتياطي
-    if (fetchedStudents.length === 0) {
       fetchedStudents = await fetchViaGViz();
+    } catch (err2) {
+      console.warn('GViz أيضاً فشل:', err2);
     }
+  }
 
-    // دمج البيانات القادمة من الشيت مع البيانات المحلية بذكاء:
-    // - الطلاب الموجودون في الشيت: نحدث بياناتهم ونحتفظ بصورة الوصل المحلية
-    // - الطلاب الموجودون محلياً فقط (أُضيفوا للتو ولم يصلوا للشيت بعد): نحتفظ بهم
-    const sheetIds = new Set(fetchedStudents.map(s => s.id));
-    const localOnlyStudents = studentsList.filter(s => !sheetIds.has(s.id));
+  // --- تحديث القائمة إن تم الاتصال بنجاح ---
+  if (fetchedStudents !== null) {
+    // احتفظ بصور الوصائل من الكاش المحلي إن وجدت
+    const localCacheMap = {};
+    studentsList.forEach(s => { if (s.receiptImage) localCacheMap[s.id] = s.receiptImage; });
 
-    // دمج: بيانات الشيت + الطلاب المحليين فقط
-    const merged = [...fetchedStudents, ...localOnlyStudents];
+    studentsList = fetchedStudents.map(s => ({
+      ...s,
+      receiptImage: localCacheMap[s.id] || null
+    }));
 
-    if (merged.length > 0) {
-      studentsList = merged;
-      saveStudents();
-      renderStudentsTable();
-      renderAccountsStudentSelector();
-      updateStats();
+    saveToCache();
+    renderStudentsTable();
+    renderAccountsStudentSelector();
+    updateStats();
 
-      if (showNotification) {
-        showAlert(`تم تحديث وجلب ${fetchedStudents.length} طالب من Google Sheet بنجاح ✓`, 'success');
+    if (showNotification) {
+      if (fetchedStudents.length > 0) {
+        showAlert(`تم تحديث ${fetchedStudents.length} طالب من Google Sheet بنجاح ✓`, 'success');
+      } else {
+        showAlert('جدول Google Sheet فارغ حالياً.', 'info');
       }
-    } else if (showNotification) {
-      showAlert('لا توجد بيانات طلبة في Google Sheet حتى الآن.', 'info');
     }
-  } catch (err) {
-    console.warn('تعذر جلب البيانات من Google Sheet:', err);
+  } else {
+    // فشل الاتصال بالشبكة
+    if (showNotification) {
+      showAlert('تعذر جلب البيانات من Google Sheet، تحقق من الاتصال بالإنترنت.', 'error');
+    }
   }
 }
 
@@ -965,7 +979,7 @@ function parseStudentsFromScript(jsonData) {
     const id = String(row.id || '').trim();
     const fullName = String(row.fullName || '').trim();
     // تجاهل صفوف الاختبار
-    if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST')) continue;
+    if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST') || id.startsWith('NON_EXISTENT')) continue;
 
     const isPaid = String(row.status || '').includes('تم التسديد');
     const paymentAmount = String(row.paymentAmount || '')
@@ -1034,7 +1048,7 @@ async function fetchViaGViz() {
     const id = String(getVal(0) || '').trim();
     const fullName = String(getVal(1) || '').trim();
     // تجاهل صفوف الاختبار وأي صف فارغ
-    if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST')) continue;
+    if (!id || !fullName || id.startsWith('TEST') || id.startsWith('STU-TEST') || id.startsWith('NON_EXISTENT')) continue;
 
     const statusText = String(getVal(8) || '');
     const isPaid = statusText.includes('تم التسديد');
