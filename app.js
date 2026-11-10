@@ -216,12 +216,53 @@ async function saveStudent(student) {
   });
 
   // Send to sheet (no-cors for POST — we can't read the response, that's ok)
+  // NOTE: We send flat fields at root level AND nested under "student" so the
+  // payload works with both the old deployed script (expects flat fields) and
+  // the new script (looks for body.student || body).
   try {
+    const paymentsClean = (student.payments || []).map(p => ({
+      id:      p.id,
+      amount:  Number(p.amount) || 0,
+      date:    p.date || '',
+      auditor: p.auditor || ''
+      // receiptImage intentionally excluded — stored in localStorage only
+    }));
+
+    const payload = {
+      action:         'save',
+      // Flat fields (old Apps Script compatibility)
+      id:             student.id,
+      fullName:       student.fullName       || '',
+      expenseType:    student.expenseType    || '',
+      department:     student.department     || '',
+      studyType:      student.studyType      || '',
+      specialization: student.specialization || '',
+      admissionYear:  student.admissionYear  || '',
+      graduationYear: student.graduationYear || '',
+      totalFee:       Number(student.totalFee) || 0,
+      createdAt:      student.createdAt      || new Date().toISOString(),
+      payments:       paymentsClean,
+      // Nested student object (new Apps Script compatibility)
+      student: {
+        id:             student.id,
+        fullName:       student.fullName       || '',
+        expenseType:    student.expenseType    || '',
+        department:     student.department     || '',
+        studyType:      student.studyType      || '',
+        specialization: student.specialization || '',
+        admissionYear:  student.admissionYear  || '',
+        graduationYear: student.graduationYear || '',
+        totalFee:       Number(student.totalFee) || 0,
+        createdAt:      student.createdAt      || new Date().toISOString(),
+        payments:       paymentsClean
+      }
+    };
+
     await fetch(SCRIPT_URL, {
       method: 'POST',
       mode:   'no-cors',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'save', student })
+      body:    JSON.stringify(payload)
     });
   } catch (err) {
     console.warn('saveStudent POST error (no-cors expected):', err);
