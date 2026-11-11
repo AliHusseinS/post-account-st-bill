@@ -64,8 +64,9 @@ function getSheet() {
 
 function hasHeaderRow(sheet) {
   if (sheet.getLastRow() === 0) return false;
-  var cell = sheet.getRange(1, 1).getValue();
-  return String(cell).trim() === 'معرف الطالب';
+  // Check if Col 9 (column I, 1-based index 9) has the 17-col header 'المبلغ المقرر الأصلي'
+  var col9 = String(sheet.getRange(1, 9).getValue() || '').trim();
+  return col9 === 'المبلغ المقرر الأصلي';
 }
 
 function generateId() {
@@ -132,7 +133,7 @@ function studentToRow(student) {
   var totalFee   = safeNum(student.totalFee);
   var paidAmount = 0;
   paymentsClean.forEach(function(p) { paidAmount += safeNum(p.amount); });
-  var remaining  = totalFee - paidAmount;
+  var remaining  = Math.max(0, totalFee - paidAmount);
   var status     = computeStatus(totalFee, paidAmount);
 
   var lastPayDate = '';
@@ -175,45 +176,59 @@ function migrateOldData(sheet) {
     return;
   }
 
-  var numCols = sheet.getLastColumn();
-  var data = sheet.getRange(1, 1, lastRow, numCols).getValues();
+  var firstCell = String(sheet.getRange(1, 1).getValue() || '').trim();
+  var isOldHeader = (firstCell === 'معرف الطالب');
 
-  // Insert header row at top
-  sheet.insertRowBefore(1);
+  if (!isOldHeader) {
+    // Row 1 is data without header, insert header row at top
+    sheet.insertRowBefore(1);
+  }
+
+  // Set the 17-column header in row 1
   sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+
+  var newLastRow = sheet.getLastRow();
+  if (newLastRow <= 1) return;
+
+  var numCols = Math.max(sheet.getLastColumn(), 17);
+  var data = sheet.getRange(2, 1, newLastRow - 1, numCols).getValues();
 
   for (var i = 0; i < data.length; i++) {
     var old = data[i];
     var sheetRow = i + 2;
 
-    // Old schema (0-based):
-    // 0:id 1:fullName 2:expenseType 3:dept 4:studyType 5:spec
-    // 6:admYear 7:gradYear 8:OLD STATUS TEXT (not fee) 9:paid string
-    // 10..13: misc  14:createdAt (if present)
+    var oldId          = String(old[0] || generateId()).trim();
+    var oldFullName    = String(old[1] || '').trim();
+    var oldExpenseType = String(old[2] || 'نفقة خاصة').trim();
+    var oldDept        = String(old[3] || '').trim();
+    var oldStudyType   = String(old[4] || 'ماجستير').trim();
+    var oldSpec        = String(old[5] || '').trim();
+    var oldAdmYear     = String(old[6] || '').trim();
+    var oldGradYear    = String(old[7] || '').trim();
 
-    var oldId          = String(old[0] || generateId());
-    var oldFullName    = String(old[1] || '');
-    var oldExpenseType = String(old[2] || 'نفقة خاصة');
-    var oldDept        = String(old[3] || '');
-    var oldStudyType   = String(old[4] || 'ماجستير');
-    var oldSpec        = String(old[5] || '');
-    var oldAdmYear     = String(old[6] || '');
-    var oldGradYear    = String(old[7] || '');
-    // old[8] = حالة التسديد text — NOT totalFee; discard
-    var oldPaidStr     = String(old[9] || '0');
-    var oldCreatedAt   = (old.length > 14 && old[14]) ? String(old[14]) : new Date().toISOString();
-
-    var oldPaid  = safeNum(oldPaidStr);
+    // Default totalFee
     var totalFee = (oldExpenseType === 'نفقة خاصة') ? DEFAULT_EXPENSE_FEE : 0;
-
     var payments = [];
-    if (oldPaid > 0) {
-      payments.push({
-        id:      'migrated-' + Date.now() + '-' + i,
-        amount:  oldPaid,
-        date:    '',
-        auditor: 'مهاجر (بيانات سابقة)'
-      });
+    var createdAt = (old.length > 14 && old[14] && String(old[14]).length > 5)
+      ? String(old[14])
+      : (old.length > 12 && old[12] && String(old[12]).length > 5 ? String(old[12]) : new Date().toISOString());
+
+    // Check if payments JSON already exists in col 16
+    if (old.length > 16 && old[16]) {
+      try { payments = JSON.parse(String(old[16])); } catch (e) { payments = []; }
+    }
+
+    // Fallback: parse old single payment from col 9
+    if (payments.length === 0) {
+      var oldPaid = safeNum(old[9]);
+      if (oldPaid > 0) {
+        payments.push({
+          id:      'migrated-' + Date.now() + '-' + i,
+          amount:  oldPaid,
+          date:    (old[10] && old[10] !== '-') ? String(old[10]) : '',
+          auditor: (old[11] && old[11] !== '-') ? String(old[11]) : 'مهاجر (بيانات سابقة)'
+        });
+      }
     }
 
     var student = {
@@ -227,12 +242,17 @@ function migrateOldData(sheet) {
       graduationYear: oldGradYear,
       totalFee:       totalFee,
       payments:       payments,
-      createdAt:      oldCreatedAt
+      createdAt:      createdAt
     };
 
     var newRow = studentToRow(student);
     sheet.getRange(sheetRow, 1, 1, newRow.length).setValues([newRow]);
   }
+
+  // Format numeric columns I, J, K
+  try {
+    sheet.getRange(2, 9, sheet.getLastRow() - 1, 3).setNumberFormat('#,##0');
+  } catch (e) {}
 }
 
 // ----------------------------------------------------------------
