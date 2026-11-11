@@ -751,7 +751,14 @@ function renderStudentDetail(id) {
           class="w-full text-sm text-gray-500 file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-teal-50 file:text-teal-700"
           onchange="handleReceiptFile(this)">
         <div id="receiptPreview" class="mt-2 hidden">
-          <img id="receiptPreviewImg" class="max-h-24 rounded-lg border" src="" alt="صورة الوصل">
+          <div class="flex items-center gap-3 p-2.5 bg-teal-50 border border-teal-200 rounded-xl">
+            <img id="receiptPreviewImg" class="w-14 h-14 object-cover rounded-lg border border-teal-300" src="" alt="صورة الوصل">
+            <div class="flex-1 text-xs">
+              <div class="font-bold text-teal-800">✅ تم اختيار صورة الوصل بنجاح</div>
+              <div class="text-teal-600">سيتم حفظ الصورة مع الدفعة في ملف الـ Sheet</div>
+            </div>
+            <button type="button" onclick="cancelReceiptUpload()" class="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded-lg transition font-medium">إلغاء</button>
+          </div>
         </div>
       </div>
       <button onclick="submitPayment('${escHtml(student.id)}')"
@@ -817,17 +824,26 @@ function renderStudentDetail(id) {
   pendingReceiptBase64 = null;
 }
 
+function cancelReceiptUpload() {
+  pendingReceiptBase64 = null;
+  const input = $('payReceiptInput');
+  if (input) input.value = '';
+  const preview = $('receiptPreview');
+  if (preview) preview.classList.add('hidden');
+}
+
 function handleReceiptFile(input) {
   const file = input.files[0];
-  if (!file) { pendingReceiptBase64 = null; return; }
+  if (!file) { cancelReceiptUpload(); return; }
 
   const reader = new FileReader();
   reader.onload = e => {
     const rawData = e.target.result;
-    // Compress image via HTML5 Canvas if it's large
     const img = new Image();
     img.onload = () => {
-      const maxDim = 1280;
+      // Compress to max 800px width/height and quality 0.65
+      // This produces ~25KB to 30KB, which saves easily in Google Sheets
+      const maxDim = 800;
       let w = img.width;
       let h = img.height;
       if (w > maxDim || h > maxDim) {
@@ -844,7 +860,7 @@ function handleReceiptFile(input) {
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      pendingReceiptBase64 = canvas.toDataURL('image/jpeg', 0.82);
+      pendingReceiptBase64 = canvas.toDataURL('image/jpeg', 0.65);
 
       const preview = $('receiptPreview');
       const imgEl   = $('receiptPreviewImg');
@@ -886,7 +902,7 @@ async function submitPayment(studentId) {
     auditor,
     receiptImage: pendingReceiptBase64 || null
   });
-  pendingReceiptBase64 = null;
+  cancelReceiptUpload();
 }
 
 function confirmDeletePayment(studentId, paymentId) {
@@ -902,7 +918,12 @@ function viewReceipt(paymentId) {
   if (!payment) { showToast('الدفعة غير موجودة', 'warning'); return; }
 
   const imgSrc = payment.receiptImage || payment.receiptViewUrl || payment.receiptUrl;
-  if (!imgSrc) { showToast('لا توجد صورة لهذا الوصل', 'warning'); return; }
+  if (!imgSrc) {
+    // Open directly via backend WebApp endpoint
+    const backendUrl = `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(paymentId)}`;
+    window.open(backendUrl, '_blank');
+    return;
+  }
 
   // Open in a clean viewer window
   const win = window.open('', '_blank');
@@ -915,27 +936,23 @@ function viewReceipt(paymentId) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { margin:0; padding:20px; background:#0f172a; color:#fff; font-family:system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; min-height:100vh; box-sizing:border-box; }
-    .header { margin-bottom:16px; text-align:center; }
-    .title { font-size:18px; font-weight:bold; color:#5eead4; margin-bottom:4px; }
-    .meta { font-size:13px; color:#94a3b8; }
-    .img-wrap { max-width:95vw; max-height:82vh; display:flex; align-items:center; justify-content:center; }
-    img { max-width:100%; max-height:80vh; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,0.6); border:1px solid #334155; }
-    .btn { margin-top:16px; padding:8px 20px; background:#0d9488; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; border:none; cursor:pointer; }
+    .card { background:#1e293b; border:1px solid #334155; border-radius:16px; padding:24px; text-align:center; max-width:96vw; }
+    .title { font-size:18px; font-weight:bold; color:#5eead4; margin-bottom:8px; }
+    .meta { font-size:13px; color:#94a3b8; margin-bottom:16px; }
+    img { max-width:100%; max-height:78vh; border-radius:12px; border:1px solid #475569; box-shadow:0 12px 35px rgba(0,0,0,0.5); }
+    .btn { margin-top:16px; padding:10px 24px; background:#0d9488; color:#fff; font-weight:bold; border-radius:8px; border:none; cursor:pointer; font-size:14px; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="title">وصل تسديد — كلية التخطيط العمراني</div>
+  <div class="card">
+    <div class="title">وصل تسديد رسمي — كلية التخطيط العمراني</div>
     <div class="meta">الطالب: ${escHtml(student.fullName || '')} | المبلغ: ${Number(payment.amount||0).toLocaleString('ar-IQ')} د.ع | التاريخ: ${escHtml(payment.date||'')} | المدقق: ${escHtml(payment.auditor||'')}</div>
+    <img src="${imgSrc}" alt="صورة الوصل"><br>
+    <button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button>
   </div>
-  <div class="img-wrap">
-    <img src="${imgSrc}" alt="صورة الوصل">
-  </div>
-  <button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button>
 </body>
 </html>`);
   } else {
-    // If popup blocked, fallback to direct location
     window.location.href = imgSrc;
   }
 }

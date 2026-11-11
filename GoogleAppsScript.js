@@ -1,15 +1,12 @@
 // ============================================================
 // Google Apps Script — Postgrad Tuition System
 // كلية التخطيط العمراني / الدراسات العليا / المتابعة
-//
-// Paste this entire file into the Apps Script editor, then:
-//   1. Run  manualSetup()  once to migrate data & add header.
-//   2. Deploy → New Deployment → Web App (Execute as: Me, Access: Anyone)
-//   3. Copy the new URL into app.js → SCRIPT_URL
 // ============================================================
 
+var SCRIPT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec';
+
 // ----------------------------------------------------------------
-// Column indices (0-based)
+// Column indices (0-based) for Sheet1
 // ----------------------------------------------------------------
 var COL = {
   ID:            0,  // A - معرف الطالب
@@ -29,7 +26,7 @@ var COL = {
   CREATED_AT:   14,  // O - تاريخ الإضافة
   RECEIPT_COUNT:15,  // P - عدد الوصولات
   PAYMENTS_JSON:16,  // Q - سجل الدفعات (JSON)
-  RECEIPT_IMAGE:17   // R - صورة الوصل (=IMAGE)
+  RECEIPT_IMAGE:17   // R - صورة الوصل (=HYPERLINK / =IMAGE)
 };
 
 var HEADERS = [
@@ -57,16 +54,26 @@ var SHEET_NAME = 'Sheet1';
 var DEFAULT_EXPENSE_FEE = 3750000;
 
 // ----------------------------------------------------------------
-// Helpers
+// Helpers — Sheet & Numbers
 // ----------------------------------------------------------------
 function getSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   return ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
 }
 
+function getReceiptsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Receipts');
+  if (!sheet) {
+    sheet = ss.insertSheet('Receipts');
+    sheet.getRange(1, 1, 1, 6).setValues([['معرف الدفعة', 'معرف الطالب', 'اسم الطالب', 'تاريخ الوصل', 'صورة الوصل (Base64)', 'تاريخ التخزين']]);
+    sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#0d9488').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+
 function hasHeaderRow(sheet) {
   if (sheet.getLastRow() === 0) return false;
-  // Check if Col 9 is 'المبلغ المقرر الأصلي' and Col 18 is 'صورة الوصل'
   var col9  = String(sheet.getRange(1, 9).getValue() || '').trim();
   var col18 = String(sheet.getRange(1, 18).getValue() || '').trim();
   return col9 === 'المبلغ المقرر الأصلي' && col18 === 'صورة الوصل';
@@ -92,6 +99,69 @@ function computeStatus(totalFee, paidAmount) {
   return 'مسدد جزئياً (' + pct + '%)';
 }
 
+// ----------------------------------------------------------------
+// Receipts Storage in Google Sheets (Persistent across all devices)
+// ----------------------------------------------------------------
+function saveReceiptImage(payId, stuId, stuName, date, base64) {
+  if (!payId || !base64) return;
+  try {
+    var sheet = getReceiptsSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      for (var i = 0; i < ids.length; i++) {
+        if (String(ids[i][0]).trim() === String(payId).trim()) {
+          sheet.getRange(i + 2, 5).setValue(base64);
+          sheet.getRange(i + 2, 6).setValue(new Date().toISOString());
+          return;
+        }
+      }
+    }
+    sheet.appendRow([payId, stuId, stuName, date, base64, new Date().toISOString()]);
+  } catch (e) {
+    Logger.log('saveReceiptImage error: ' + e);
+  }
+}
+
+function deleteReceiptImage(payId) {
+  if (!payId) return;
+  try {
+    var sheet = getReceiptsSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return;
+    var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = ids.length - 1; i >= 0; i--) {
+      if (String(ids[i][0]).trim() === String(payId).trim()) {
+        sheet.deleteRow(i + 2);
+        break;
+      }
+    }
+  } catch (e) {}
+}
+
+function getAllReceiptsMap() {
+  var map = {};
+  try {
+    var sheet = getReceiptsSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return map;
+    var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var pId = String(data[i][0]).trim();
+      var b64 = String(data[i][4] || '').trim();
+      if (pId && b64) {
+        map[pId] = b64;
+      }
+    }
+  } catch (e) {
+    Logger.log('getAllReceiptsMap error: ' + e);
+  }
+  return map;
+}
+
+// ----------------------------------------------------------------
+// Row <-> Student Conversion
+// ----------------------------------------------------------------
 function rowToStudent(row) {
   var paymentsRaw = row[COL.PAYMENTS_JSON];
   var payments = [];
@@ -123,65 +193,21 @@ function rowToStudent(row) {
   };
 }
 
-// Helper: Save receipt image to Google Drive if authorized
-function saveReceiptImageToDrive(base64Data, fileName) {
-  if (!base64Data || typeof base64Data !== 'string') return null;
-  try {
-    var folderName = 'وصلات رسوم الدراسات العليا';
-    var folders = DriveApp.getFoldersByName(folderName);
-    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
-    try {
-      folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    } catch(e) {}
-
-    var contentType = 'image/jpeg';
-    if (base64Data.indexOf('data:image/png') === 0) contentType = 'image/png';
-    else if (base64Data.indexOf('data:image/webp') === 0) contentType = 'image/webp';
-
-    var cleanBase64 = base64Data.indexOf(',') > -1 ? base64Data.split(',')[1] : base64Data;
-    var bytes = Utilities.base64Decode(cleanBase64);
-    var blob = Utilities.newBlob(bytes, contentType, fileName);
-    var file = folder.createFile(blob);
-    try {
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    } catch(e) {}
-
-    var fileId = file.getId();
-    return {
-      fileId: fileId,
-      viewUrl: 'https://drive.google.com/file/d/' + fileId + '/view',
-      directUrl: 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w1000'
-    };
-  } catch (err) {
-    Logger.log('DriveApp save warning: ' + err.message);
-    return null;
-  }
-}
-
 function studentToRow(student) {
   var studentName = student.fullName || 'طالب';
 
-  var paymentsClean = (student.payments || []).map(function(p, idx) {
+  var paymentsClean = (student.payments || []).map(function(p) {
     var receiptUrl = p.receiptUrl || '';
-    var receiptViewUrl = p.receiptViewUrl || '';
-
-    // If receiptImage (base64) is provided and not yet uploaded to Drive, try saving
-    if (p.receiptImage && !receiptUrl) {
-      var fileName = 'وصل_' + studentName.replace(/\s+/g, '_') + '_' + (p.date || 'pay') + '_' + (idx + 1) + '.jpg';
-      var driveRes = saveReceiptImageToDrive(p.receiptImage, fileName);
-      if (driveRes) {
-        receiptUrl = driveRes.directUrl;
-        receiptViewUrl = driveRes.viewUrl;
-      }
+    if (p.hasReceipt || p.receiptImage) {
+      receiptUrl = SCRIPT_WEBAPP_URL + '?action=view_receipt&id=' + encodeURIComponent(p.id);
     }
-
     return {
       id:             p.id,
       amount:         safeNum(p.amount),
       date:           p.date || '',
       auditor:        p.auditor || '',
-      receiptUrl:     receiptUrl,
-      receiptViewUrl: receiptViewUrl
+      hasReceipt:     Boolean(p.receiptImage || p.hasReceipt || p.receiptUrl),
+      receiptUrl:     receiptUrl
     };
   });
 
@@ -199,21 +225,19 @@ function studentToRow(student) {
     lastAuditor = last.auditor || '';
   }
 
-  // Find latest receipt URL
-  var latestReceiptUrl = '';
-  var latestViewUrl = '';
+  // Find latest payment with a receipt
+  var latestReceiptPayId = '';
   for (var k = paymentsClean.length - 1; k >= 0; k--) {
-    if (paymentsClean[k].receiptUrl) {
-      latestReceiptUrl = paymentsClean[k].receiptUrl;
-      latestViewUrl = paymentsClean[k].receiptViewUrl || latestReceiptUrl;
+    if (paymentsClean[k].hasReceipt) {
+      latestReceiptPayId = paymentsClean[k].id;
       break;
     }
   }
 
-  var receiptImageFormula = '-';
-  if (latestReceiptUrl) {
-    // In-cell image formula with link
-    receiptImageFormula = '=HYPERLINK("' + latestViewUrl + '", IMAGE("' + latestReceiptUrl + '", 1))';
+  var receiptCellFormula = '-';
+  if (latestReceiptPayId) {
+    var viewUrl = SCRIPT_WEBAPP_URL + '?action=view_receipt&id=' + encodeURIComponent(latestReceiptPayId);
+    receiptCellFormula = '=HYPERLINK("' + viewUrl + '", "🖼️ عرض الوصل")';
   }
 
   var row = new Array(18).fill('');
@@ -234,17 +258,16 @@ function studentToRow(student) {
   row[COL.CREATED_AT]    = student.createdAt || new Date().toISOString();
   row[COL.RECEIPT_COUNT] = paymentsClean.length + ' وصولات';
   row[COL.PAYMENTS_JSON] = JSON.stringify(paymentsClean);
-  row[COL.RECEIPT_IMAGE] = receiptImageFormula;
+  row[COL.RECEIPT_IMAGE] = receiptCellFormula;
   return row;
 }
 
 // ----------------------------------------------------------------
-// Migration: old 14-col format → new 17-col format
+// Migration
 // ----------------------------------------------------------------
 function migrateOldData(sheet) {
   var lastRow = sheet.getLastRow();
   if (lastRow === 0) {
-    // Empty sheet, just add header
     sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
     return;
   }
@@ -253,17 +276,15 @@ function migrateOldData(sheet) {
   var isOldHeader = (firstCell === 'معرف الطالب');
 
   if (!isOldHeader) {
-    // Row 1 is data without header, insert header row at top
     sheet.insertRowBefore(1);
   }
 
-  // Set the 17-column header in row 1
   sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
 
   var newLastRow = sheet.getLastRow();
   if (newLastRow <= 1) return;
 
-  var numCols = Math.max(sheet.getLastColumn(), 17);
+  var numCols = Math.max(sheet.getLastColumn(), HEADERS.length);
   var data = sheet.getRange(2, 1, newLastRow - 1, numCols).getValues();
 
   for (var i = 0; i < data.length; i++) {
@@ -279,19 +300,16 @@ function migrateOldData(sheet) {
     var oldAdmYear     = String(old[6] || '').trim();
     var oldGradYear    = String(old[7] || '').trim();
 
-    // Default totalFee
     var totalFee = (oldExpenseType === 'نفقة خاصة') ? DEFAULT_EXPENSE_FEE : 0;
     var payments = [];
     var createdAt = (old.length > 14 && old[14] && String(old[14]).length > 5)
       ? String(old[14])
       : (old.length > 12 && old[12] && String(old[12]).length > 5 ? String(old[12]) : new Date().toISOString());
 
-    // Check if payments JSON already exists in col 16
     if (old.length > 16 && old[16]) {
       try { payments = JSON.parse(String(old[16])); } catch (e) { payments = []; }
     }
 
-    // Fallback: parse old single payment from col 9
     if (payments.length === 0) {
       var oldPaid = safeNum(old[9]);
       if (oldPaid > 0) {
@@ -322,46 +340,11 @@ function migrateOldData(sheet) {
     sheet.getRange(sheetRow, 1, 1, newRow.length).setValues([newRow]);
   }
 
-  // Format numeric columns I, J, K
   try {
     sheet.getRange(2, 9, sheet.getLastRow() - 1, 3).setNumberFormat('#,##0');
   } catch (e) {}
 }
 
-// ----------------------------------------------------------------
-// manualAuthorizeDrive — run once in Apps Script editor to authorize Drive access
-// ----------------------------------------------------------------
-function manualAuthorizeDrive() {
-  var root = DriveApp.getRootFolder();
-  Logger.log('Drive authorized successfully! Root folder: ' + root.getName());
-}
-
-// ----------------------------------------------------------------
-// manualSetup — run once from Apps Script editor
-// ----------------------------------------------------------------
-function manualSetup() {
-  var sheet = getSheet();
-  if (!hasHeaderRow(sheet)) {
-    Logger.log('No header found. Running migration...');
-    migrateOldData(sheet);
-    Logger.log('Migration complete.');
-  } else {
-    Logger.log('Header already present. No migration needed.');
-  }
-  try {
-    var lastDataRow = sheet.getLastRow();
-    if (lastDataRow > 1) {
-      sheet.getRange(2, 9, lastDataRow - 1, 3).setNumberFormat('#,##0');
-    }
-  } catch(e) {
-    Logger.log('Format warning: ' + e);
-  }
-  Logger.log('manualSetup done successfully.');
-}
-
-// ----------------------------------------------------------------
-// ensureHeader — called at runtime before every read/write
-// ----------------------------------------------------------------
 function ensureHeader(sheet) {
   if (!hasHeaderRow(sheet)) {
     migrateOldData(sheet);
@@ -369,7 +352,7 @@ function ensureHeader(sheet) {
 }
 
 // ----------------------------------------------------------------
-// CORS output helper
+// CORS Output Helper
 // ----------------------------------------------------------------
 function corsOutput(data) {
   return ContentService
@@ -384,19 +367,30 @@ function doGet(e) {
   var params = (e && e.parameter) ? e.parameter : {};
   var action = params.action || '';
 
+  // 1. VIEW RECEIPT — Opens receipt in browser directly
+  if (action === 'view_receipt') {
+    var viewPayId = String(params.id || '').trim();
+    var receiptsMap = getAllReceiptsMap();
+    var b64 = receiptsMap[viewPayId] || '';
+
+    if (!b64) {
+      var notFoundHtml = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الوصل غير موجود</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.box{text-align:center;padding:40px;background:#1e293b;border-radius:16px;border:1px solid #334155;}h2{color:#f87171;margin-bottom:8px;}p{color:#94a3b8;}</style></head><body><div class="box"><h2>⚠️ لم يتم العثور على صورة الوصل</h2><p>قد تكون الدفعة سُجلت بدون إرفاق صورة للوصل.</p></div></body></html>';
+      return HtmlService.createHtmlOutput(notFoundHtml);
+    }
+
+    var html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>وصل تسديد — كلية التخطيط العمراني</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:20px;background:#0f172a;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;box-sizing:border-box;}.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:24px;text-align:center;max-width:96vw;}h2{color:#5eead4;margin:0 0 16px 0;font-size:20px;}img{max-width:100%;max-height:80vh;border-radius:12px;border:1px solid #475569;box-shadow:0 12px 35px rgba(0,0,0,0.5);}.btn{margin-top:18px;padding:10px 28px;background:#0d9488;color:#fff;font-weight:bold;border-radius:10px;border:none;cursor:pointer;font-size:15px;}</style></head><body><div class="card"><h2>وصل تسديد رسمي — كلية التخطيط العمراني</h2><img src="' + b64 + '"><br><button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button></div></body></html>';
+    return HtmlService.createHtmlOutput(html);
+  }
+
   var sheet = getSheet();
   ensureHeader(sheet);
 
-  // DELETE via GET
+  // 2. DELETE via GET
   if (action === 'delete') {
     var deleteId = String(params.id || '').trim();
-    if (!deleteId) {
-      return corsOutput({ success: false, error: 'Missing id parameter' });
-    }
+    if (!deleteId) return corsOutput({ success: false, error: 'Missing id parameter' });
     var lastRow = sheet.getLastRow();
-    if (lastRow <= 1) {
-      return corsOutput({ success: false, error: 'No data rows' });
-    }
+    if (lastRow <= 1) return corsOutput({ success: false, error: 'No data rows' });
     var idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     var deleted = false;
     for (var i = idValues.length - 1; i >= 0; i--) {
@@ -406,22 +400,31 @@ function doGet(e) {
         break;
       }
     }
-    return corsOutput({
-      success: deleted,
-      message: deleted ? ('Deleted: ' + deleteId) : ('Not found: ' + deleteId)
-    });
+    return corsOutput({ success: deleted, message: deleted ? ('Deleted: ' + deleteId) : ('Not found: ' + deleteId) });
   }
 
-  // DEFAULT: return all students as JSON array
+  // 3. DEFAULT: return all students with receipt images merged
   var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) {
-    return corsOutput([]);
-  }
+  if (lastRow <= 1) return corsOutput([]);
+
   var numCols = Math.max(sheet.getLastColumn(), HEADERS.length);
   var rows = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  var receiptsMap = getAllReceiptsMap();
+
   var students = rows
     .map(rowToStudent)
-    .filter(function(s) { return s.id && s.id.trim() !== ''; });
+    .filter(function(s) { return s.id && s.id.trim() !== ''; })
+    .map(function(s) {
+      s.payments = (s.payments || []).map(function(p) {
+        if (receiptsMap[p.id]) {
+          p.receiptImage = receiptsMap[p.id];
+          p.hasReceipt = true;
+        }
+        return p;
+      });
+      return s;
+    });
+
   return corsOutput(students);
 }
 
@@ -441,7 +444,7 @@ function doPost(e) {
 
   var action = body.action || 'save';
 
-  // DELETE via POST
+  // DELETE
   if (action === 'delete') {
     var deleteId = String(body.id || '').trim();
     if (!deleteId) return corsOutput({ success: false, error: 'Missing id' });
@@ -462,7 +465,6 @@ function doPost(e) {
   // SAVE / UPDATE
   var student = body.student || body;
 
-  // Default fee for نفقة خاصة
   var totalFee = safeNum(student.totalFee);
   if (totalFee === 0 && student.expenseType === 'نفقة خاصة') {
     totalFee = DEFAULT_EXPENSE_FEE;
@@ -476,10 +478,16 @@ function doPost(e) {
     student.createdAt = new Date().toISOString();
   }
 
+  // Save any receipt images to Receipts sheet tab
+  (student.payments || []).forEach(function(p) {
+    if (p.receiptImage && String(p.receiptImage).indexOf('data:image') === 0) {
+      saveReceiptImage(p.id, student.id, student.fullName, p.date, p.receiptImage);
+    }
+  });
+
   var newRow    = studentToRow(student);
   var studentId = String(newRow[COL.ID]).trim();
 
-  // Check if student already exists → update, else append
   var lastRow        = sheet.getLastRow();
   var existingRowIdx = -1;
   if (lastRow > 1) {
