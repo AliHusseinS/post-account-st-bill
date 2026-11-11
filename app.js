@@ -216,16 +216,15 @@ async function saveStudent(student) {
   });
 
   // Send to sheet (no-cors for POST — we can't read the response, that's ok)
-  // NOTE: We send flat fields at root level AND nested under "student" so the
-  // payload works with both the old deployed script (expects flat fields) and
-  // the new script (looks for body.student || body).
   try {
     const paymentsClean = (student.payments || []).map(p => ({
-      id:      p.id,
-      amount:  Number(p.amount) || 0,
-      date:    p.date || '',
-      auditor: p.auditor || ''
-      // receiptImage intentionally excluded — stored in localStorage only
+      id:             p.id,
+      amount:         Number(p.amount) || 0,
+      date:           p.date || '',
+      auditor:        p.auditor || '',
+      receiptUrl:     p.receiptUrl || '',
+      receiptViewUrl: p.receiptViewUrl || '',
+      receiptImage:   p.receiptImage || null
     }));
 
     const payload = {
@@ -772,10 +771,10 @@ function renderStudentDetail(id) {
                     <td class="py-2 px-3 font-semibold text-green-700">${fmt(p.amount)}</td>
                     <td class="py-2 px-3">${escHtml(p.auditor)}</td>
                     <td class="py-2 px-3 text-center">
-                      ${p.receiptImage
+                      ${(p.receiptImage || p.receiptUrl || p.receiptViewUrl)
                         ? `<button onclick="viewReceipt('${escHtml(p.id)}')"
-                             class="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded-lg hover:bg-blue-100">
-                             عرض
+                             class="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg hover:bg-blue-100 inline-flex items-center gap-1 mx-auto font-medium transition">
+                             <span>🖼️</span> عرض
                            </button>`
                         : '<span class="text-gray-300 text-xs">—</span>'
                       }
@@ -805,15 +804,49 @@ function renderStudentDetail(id) {
 function handleReceiptFile(input) {
   const file = input.files[0];
   if (!file) { pendingReceiptBase64 = null; return; }
+
   const reader = new FileReader();
   reader.onload = e => {
-    pendingReceiptBase64 = e.target.result;
-    const preview = $('receiptPreview');
-    const img     = $('receiptPreviewImg');
-    if (preview && img) {
-      img.src = pendingReceiptBase64;
-      preview.classList.remove('hidden');
-    }
+    const rawData = e.target.result;
+    // Compress image via HTML5 Canvas if it's large
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1280;
+      let w = img.width;
+      let h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) {
+          h = Math.round((h * maxDim) / w);
+          w = maxDim;
+        } else {
+          w = Math.round((w * maxDim) / h);
+          h = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      pendingReceiptBase64 = canvas.toDataURL('image/jpeg', 0.82);
+
+      const preview = $('receiptPreview');
+      const imgEl   = $('receiptPreviewImg');
+      if (preview && imgEl) {
+        imgEl.src = pendingReceiptBase64;
+        preview.classList.remove('hidden');
+      }
+    };
+    img.onerror = () => {
+      pendingReceiptBase64 = rawData;
+      const preview = $('receiptPreview');
+      const imgEl   = $('receiptPreviewImg');
+      if (preview && imgEl) {
+        imgEl.src = pendingReceiptBase64;
+        preview.classList.remove('hidden');
+      }
+    };
+    img.src = rawData;
   };
   reader.readAsDataURL(file);
 }
@@ -850,11 +883,45 @@ function viewReceipt(paymentId) {
   const student = students.find(s => s.id === selectedStudentId);
   if (!student) return;
   const payment = (student.payments || []).find(p => p.id === paymentId);
-  if (!payment || !payment.receiptImage) { showToast('لا توجد صورة', 'warning'); return; }
-  const win = window.open('');
-  win.document.write(`<html><body style="margin:0;background:#000;">
-    <img src="${payment.receiptImage}" style="max-width:100%;display:block;margin:auto;">
-  </body></html>`);
+  if (!payment) { showToast('الدفعة غير موجودة', 'warning'); return; }
+
+  const imgSrc = payment.receiptImage || payment.receiptViewUrl || payment.receiptUrl;
+  if (!imgSrc) { showToast('لا توجد صورة لهذا الوصل', 'warning'); return; }
+
+  // Open in a clean viewer window
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(`<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>وصل تسديد — ${escHtml(student.fullName || '')}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { margin:0; padding:20px; background:#0f172a; color:#fff; font-family:system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; min-height:100vh; box-sizing:border-box; }
+    .header { margin-bottom:16px; text-align:center; }
+    .title { font-size:18px; font-weight:bold; color:#5eead4; margin-bottom:4px; }
+    .meta { font-size:13px; color:#94a3b8; }
+    .img-wrap { max-width:95vw; max-height:82vh; display:flex; align-items:center; justify-content:center; }
+    img { max-width:100%; max-height:80vh; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,0.6); border:1px solid #334155; }
+    .btn { margin-top:16px; padding:8px 20px; background:#0d9488; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; border:none; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">وصل تسديد — كلية التخطيط العمراني</div>
+    <div class="meta">الطالب: ${escHtml(student.fullName || '')} | المبلغ: ${Number(payment.amount||0).toLocaleString('ar-IQ')} د.ع | التاريخ: ${escHtml(payment.date||'')} | المدقق: ${escHtml(payment.auditor||'')}</div>
+  </div>
+  <div class="img-wrap">
+    <img src="${imgSrc}" alt="صورة الوصل">
+  </div>
+  <button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button>
+</body>
+</html>`);
+  } else {
+    // If popup blocked, fallback to direct location
+    window.location.href = imgSrc;
+  }
 }
 
 // ============================================================

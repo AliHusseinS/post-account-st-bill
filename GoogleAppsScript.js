@@ -28,7 +28,8 @@ var COL = {
   LAST_AUDITOR: 13,  // N - آخر مدقق
   CREATED_AT:   14,  // O - تاريخ الإضافة
   RECEIPT_COUNT:15,  // P - عدد الوصولات
-  PAYMENTS_JSON:16   // Q - سجل الدفعات (JSON, NO receiptImage)
+  PAYMENTS_JSON:16,  // Q - سجل الدفعات (JSON)
+  RECEIPT_IMAGE:17   // R - صورة الوصل (=IMAGE)
 };
 
 var HEADERS = [
@@ -48,7 +49,8 @@ var HEADERS = [
   'آخر مدقق',
   'تاريخ الإضافة',
   'عدد الوصولات',
-  'سجل الدفعات'
+  'سجل الدفعات',
+  'صورة الوصل'
 ];
 
 var SHEET_NAME = 'Sheet1';
@@ -64,9 +66,10 @@ function getSheet() {
 
 function hasHeaderRow(sheet) {
   if (sheet.getLastRow() === 0) return false;
-  // Check if Col 9 (column I, 1-based index 9) has the 17-col header 'المبلغ المقرر الأصلي'
-  var col9 = String(sheet.getRange(1, 9).getValue() || '').trim();
-  return col9 === 'المبلغ المقرر الأصلي';
+  // Check if Col 9 is 'المبلغ المقرر الأصلي' and Col 18 is 'صورة الوصل'
+  var col9  = String(sheet.getRange(1, 9).getValue() || '').trim();
+  var col18 = String(sheet.getRange(1, 18).getValue() || '').trim();
+  return col9 === 'المبلغ المقرر الأصلي' && col18 === 'صورة الوصل';
 }
 
 function generateId() {
@@ -120,13 +123,65 @@ function rowToStudent(row) {
   };
 }
 
-function studentToRow(student) {
-  var paymentsClean = (student.payments || []).map(function(p) {
+// Helper: Save receipt image to Google Drive if authorized
+function saveReceiptImageToDrive(base64Data, fileName) {
+  if (!base64Data || typeof base64Data !== 'string') return null;
+  try {
+    var folderName = 'وصلات رسوم الدراسات العليا';
+    var folders = DriveApp.getFoldersByName(folderName);
+    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+    try {
+      folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch(e) {}
+
+    var contentType = 'image/jpeg';
+    if (base64Data.indexOf('data:image/png') === 0) contentType = 'image/png';
+    else if (base64Data.indexOf('data:image/webp') === 0) contentType = 'image/webp';
+
+    var cleanBase64 = base64Data.indexOf(',') > -1 ? base64Data.split(',')[1] : base64Data;
+    var bytes = Utilities.base64Decode(cleanBase64);
+    var blob = Utilities.newBlob(bytes, contentType, fileName);
+    var file = folder.createFile(blob);
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch(e) {}
+
+    var fileId = file.getId();
     return {
-      id:      p.id,
-      amount:  safeNum(p.amount),
-      date:    p.date || '',
-      auditor: p.auditor || ''
+      fileId: fileId,
+      viewUrl: 'https://drive.google.com/file/d/' + fileId + '/view',
+      directUrl: 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w1000'
+    };
+  } catch (err) {
+    Logger.log('DriveApp save warning: ' + err.message);
+    return null;
+  }
+}
+
+function studentToRow(student) {
+  var studentName = student.fullName || 'طالب';
+
+  var paymentsClean = (student.payments || []).map(function(p, idx) {
+    var receiptUrl = p.receiptUrl || '';
+    var receiptViewUrl = p.receiptViewUrl || '';
+
+    // If receiptImage (base64) is provided and not yet uploaded to Drive, try saving
+    if (p.receiptImage && !receiptUrl) {
+      var fileName = 'وصل_' + studentName.replace(/\s+/g, '_') + '_' + (p.date || 'pay') + '_' + (idx + 1) + '.jpg';
+      var driveRes = saveReceiptImageToDrive(p.receiptImage, fileName);
+      if (driveRes) {
+        receiptUrl = driveRes.directUrl;
+        receiptViewUrl = driveRes.viewUrl;
+      }
+    }
+
+    return {
+      id:             p.id,
+      amount:         safeNum(p.amount),
+      date:           p.date || '',
+      auditor:        p.auditor || '',
+      receiptUrl:     receiptUrl,
+      receiptViewUrl: receiptViewUrl
     };
   });
 
@@ -144,7 +199,24 @@ function studentToRow(student) {
     lastAuditor = last.auditor || '';
   }
 
-  var row = new Array(17).fill('');
+  // Find latest receipt URL
+  var latestReceiptUrl = '';
+  var latestViewUrl = '';
+  for (var k = paymentsClean.length - 1; k >= 0; k--) {
+    if (paymentsClean[k].receiptUrl) {
+      latestReceiptUrl = paymentsClean[k].receiptUrl;
+      latestViewUrl = paymentsClean[k].receiptViewUrl || latestReceiptUrl;
+      break;
+    }
+  }
+
+  var receiptImageFormula = '-';
+  if (latestReceiptUrl) {
+    // In-cell image formula with link
+    receiptImageFormula = '=HYPERLINK("' + latestViewUrl + '", IMAGE("' + latestReceiptUrl + '", 1))';
+  }
+
+  var row = new Array(18).fill('');
   row[COL.ID]            = student.id || generateId();
   row[COL.FULL_NAME]     = student.fullName || '';
   row[COL.EXPENSE_TYPE]  = student.expenseType || '';
@@ -162,6 +234,7 @@ function studentToRow(student) {
   row[COL.CREATED_AT]    = student.createdAt || new Date().toISOString();
   row[COL.RECEIPT_COUNT] = paymentsClean.length + ' وصولات';
   row[COL.PAYMENTS_JSON] = JSON.stringify(paymentsClean);
+  row[COL.RECEIPT_IMAGE] = receiptImageFormula;
   return row;
 }
 
@@ -253,6 +326,14 @@ function migrateOldData(sheet) {
   try {
     sheet.getRange(2, 9, sheet.getLastRow() - 1, 3).setNumberFormat('#,##0');
   } catch (e) {}
+}
+
+// ----------------------------------------------------------------
+// manualAuthorizeDrive — run once in Apps Script editor to authorize Drive access
+// ----------------------------------------------------------------
+function manualAuthorizeDrive() {
+  var root = DriveApp.getRootFolder();
+  Logger.log('Drive authorized successfully! Root folder: ' + root.getName());
 }
 
 // ----------------------------------------------------------------
