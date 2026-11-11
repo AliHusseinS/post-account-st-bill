@@ -384,6 +384,8 @@ function logout() {
   document.querySelectorAll('.role-btn').forEach(b =>
     b.classList.remove('ring-2', 'ring-teal-500', 'bg-teal-50')
   );
+  const fab = $('fabAddStudent');
+  if (fab) fab.classList.add('hidden');
   $('loginScreen').classList.remove('hidden');
   $('appShell').classList.add('hidden');
 }
@@ -437,8 +439,14 @@ function renderStats() {
 // ============================================================
 function renderCurrentView() {
   if (!currentUser) return;
-  if (currentUser.role === 'postgrad') renderPostgradTable();
-  else renderAccountsView();
+  const fab = $('fabAddStudent');
+  if (currentUser.role === 'postgrad') {
+    if (fab) fab.classList.remove('hidden');
+    renderPostgradTable();
+  } else {
+    if (fab) fab.classList.add('hidden');
+    renderAccountsView();
+  }
 }
 
 // ============================================================
@@ -447,6 +455,8 @@ function renderCurrentView() {
 function showPostgradView() {
   $('postgradView').classList.remove('hidden');
   $('accountsView').classList.add('hidden');
+  const fab = $('fabAddStudent');
+  if (fab) fab.classList.remove('hidden');
   renderPostgradTable();
 }
 
@@ -535,6 +545,10 @@ function setupPostgradFilters() {
 
 // ---- Add Student Modal ----
 function openAddStudentModal() {
+  if (!currentUser || currentUser.role !== 'postgrad') {
+    showToast('صلاحية إضافة طالب خاصة بقسم الدراسات العليا فقط', 'warning');
+    return;
+  }
   $('addStudentModal').classList.remove('hidden');
   $('addStudentForm').reset();
   $('totalFeeField').value = DEFAULT_PRIVATE_FEE;
@@ -598,6 +612,8 @@ function confirmDeleteStudent(id, name) {
 function showAccountsView() {
   $('accountsView').classList.remove('hidden');
   $('postgradView').classList.add('hidden');
+  const fab = $('fabAddStudent');
+  if (fab) fab.classList.add('hidden');
   renderAccountsView();
 }
 
