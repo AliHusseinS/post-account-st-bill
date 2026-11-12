@@ -757,7 +757,7 @@ function renderStudentDetail(id) {
           placeholder="اسم المدقق">
       </div>
       <div class="mb-4">
-        <label class="block text-xs text-gray-500 mb-1">صورة الوصل (اختياري)</label>
+        <label class="block text-xs text-gray-500 mb-1">صورة الوصل</label>
         <input id="payReceiptInput" type="file" accept="image/*"
           class="w-full text-sm text-gray-500 file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-teal-50 file:text-teal-700"
           onchange="handleReceiptFile(this)">
