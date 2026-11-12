@@ -420,6 +420,26 @@ function doGet(e) {
     return corsOutput({ success: Boolean(recJson.b64), receiptImage: recJson.b64, studentName: recJson.stuName, date: recJson.date });
   }
 
+  // DEBUG — Inspect sheets structure
+  if (action === 'debug') {
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var sheets = ss.getSheets().map(function(s) {
+        var lr = s.getLastRow();
+        var lc = s.getLastColumn();
+        return {
+          name: s.getName(),
+          lastRow: lr,
+          lastColumn: lc,
+          headers: lr > 0 ? s.getRange(1, 1, 1, Math.min(lc, 18)).getValues()[0] : []
+        };
+      });
+      return corsOutput({ success: true, sheets: sheets });
+    } catch (e) {
+      return corsOutput({ success: false, error: e.toString() });
+    }
+  }
+
   var sheet = getSheet();
   ensureHeader(sheet);
 
