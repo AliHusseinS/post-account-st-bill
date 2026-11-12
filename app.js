@@ -1124,7 +1124,7 @@ async function exportStudentPDF(id) {
     .map((p, i) => `
       <div class="receipt-page">
         <div class="receipt-header">
-          <h3>🧾 صورة الوصل — الدفعة ${i + 1}</h3>
+          <h3>معلومات الدفعة ${i + 1}</h3>
           <div class="receipt-meta">
             <span>الطالب: <strong>${student.fullName || ''}</strong></span>
             <span>المبلغ: <strong>${Number(p.amount || 0).toLocaleString('ar-IQ')} د.ع</strong></span>
@@ -1377,11 +1377,10 @@ async function exportStudentPDF(id) {
   <div class="header">
     <div class="header-logo">🎓</div>
     <div class="header-text" style="flex:1; margin: 0 14px;">
-      <h1>وثيقة متابعة الرسوم الدراسية</h1>
-      <p>كلية التخطيط العمراني / الدراسات العليا / المتابعة المالية</p>
+      <h1>كلية التخطيط العمراني / الدراسات العليا / المتابعة المالية</h1>
     </div>
     <div class="header-id">
-      <span>رقم الوثيقة:</span>
+      <span>ID - NO.:</span>
       <strong>${student.id}</strong>
       <span style="display:block;margin-top:4px;">تاريخ الإصدار: ${new Date().toLocaleDateString('ar-IQ')}</span>
     </div>
@@ -1425,10 +1424,10 @@ async function exportStudentPDF(id) {
   </div>
 
   <!-- Financial Summary -->
-  <h2>الملخص المالي</h2>
+  <h2>بيانات الدفع</h2>
   <div class="fin-summary">
     <div class="fin-card total">
-      <div class="fc-label">المبلغ المقرر الأصلي</div>
+      <div class="fc-label">المبلغ المقرر</div>
       <div class="fc-value">${Number(f.totalFee).toLocaleString('ar-IQ')} د.ع</div>
     </div>
     <div class="fin-card paid">
@@ -1446,7 +1445,7 @@ async function exportStudentPDF(id) {
 
   <!-- Payments Table -->
   ${payments.length > 0 ? `
-  <h2>سجل الدفعات التفصيلي</h2>
+  <h2>سجل الدفعات</h2>
   <table>
     <thead>
       <tr>
