@@ -1069,66 +1069,427 @@ function openReceiptInNewTab() {
 }
 
 // ============================================================
-// EXPORT — Individual Student PDF
+// EXPORT — Individual Student PDF (HTML Print method — full Arabic + receipt images)
 // ============================================================
-function exportStudentPDF(id) {
+async function exportStudentPDF(id) {
   const student = students.find(s => s.id === id);
   if (!student) { showToast('الطالب غير موجود', 'error'); return; }
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-  const f   = computeFinancials(student);
+  showToast('جاري تجهيز ملف PDF...', 'info');
 
-  // Title
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Student Financial Voucher', 105, 18, { align: 'center' });
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'normal');
-  doc.text('College of Urban Planning - Graduate Studies', 105, 26, { align: 'center' });
-
-  doc.setFontSize(10);
-  doc.setDrawColor(20, 155, 140);
-  doc.line(14, 30, 196, 30);
-
-  // Student info table
-  doc.autoTable({
-    startY: 34,
-    theme: 'grid',
-    head: [['Field', 'Value']],
-    body: [
-      ['ID',              student.id],
-      ['Full Name',       student.fullName],
-      ['Department',      student.department],
-      ['Expense Type',    student.expenseType],
-      ['Study Type',      student.studyType],
-      ['Specialization',  student.specialization],
-      ['Admission Year',  student.admissionYear],
-      ['Graduation Year', student.graduationYear],
-      ['Total Fee',       fmt(f.totalFee)],
-      ['Paid Amount',     fmt(f.paidAmount)],
-      ['Remaining',       fmt(f.remainingAmount)],
-      ['Status',          f.status]
-    ],
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: [20, 155, 140] }
-  });
-
-  // Payments
+  const f = computeFinancials(student);
   const payments = student.payments || [];
-  if (payments.length > 0) {
-    doc.autoTable({
-      startY: doc.lastAutoTable.finalY + 8,
-      theme: 'striped',
-      head: [['#', 'Date', 'Amount', 'Auditor']],
-      body: payments.map((p, i) => [i + 1, p.date, fmt(p.amount), p.auditor]),
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [20, 155, 140] }
-    });
+
+  // ── 1. Gather receipt images for all payments ──────────────────
+  const receiptImgs = {};
+  for (const p of payments) {
+    let img = p.receiptImage;
+    // If not in memory, try localStorage cache
+    if (!img) {
+      const cache = loadReceiptsCache();
+      img = (cache[student.id] && cache[student.id][p.id]) || null;
+    }
+    // If still missing but has URL, fetch from server
+    if (!img && p.id) {
+      try {
+        const res = await fetch(`${SCRIPT_URL}?action=get_receipt&id=${encodeURIComponent(p.id)}`);
+        const data = await res.json();
+        if (data && data.receiptImage) {
+          img = data.receiptImage;
+          storeReceiptImage(student.id, p.id, img);
+          p.receiptImage = img;
+        }
+      } catch (e) {
+        console.warn('Receipt fetch failed for', p.id, e);
+      }
+    }
+    if (img) receiptImgs[p.id] = img;
   }
 
-  doc.save(`voucher_${student.id}.pdf`);
-  showToast('تم تحميل PDF بنجاح', 'success');
+  // ── 2. Build print-ready HTML ──────────────────────────────────
+  const paymentRows = payments.map((p, i) => {
+    const hasImg = Boolean(receiptImgs[p.id]);
+    return `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${p.date || '-'}</td>
+        <td class="amount">${Number(p.amount || 0).toLocaleString('ar-IQ')} د.ع</td>
+        <td>${p.auditor || '-'}</td>
+        <td style="color:${hasImg ? '#0d9488' : '#94a3b8'};font-weight:bold">${hasImg ? '✅ مرفق' : '—'}</td>
+      </tr>`;
+  }).join('');
+
+  const receiptPages = payments
+    .filter(p => receiptImgs[p.id])
+    .map((p, i) => `
+      <div class="receipt-page">
+        <div class="receipt-header">
+          <h3>🧾 صورة الوصل — الدفعة ${i + 1}</h3>
+          <div class="receipt-meta">
+            <span>الطالب: <strong>${student.fullName || ''}</strong></span>
+            <span>المبلغ: <strong>${Number(p.amount || 0).toLocaleString('ar-IQ')} د.ع</strong></span>
+            <span>التاريخ: <strong>${p.date || '-'}</strong></span>
+            <span>المدقق: <strong>${p.auditor || '-'}</strong></span>
+          </div>
+        </div>
+        <div class="receipt-img-wrap">
+          <img src="${receiptImgs[p.id]}" alt="صورة الوصل ${i + 1}">
+        </div>
+      </div>`).join('');
+
+  const statusColor = f.isPaid ? '#16a34a' : f.paidAmount > 0 ? '#d97706' : '#dc2626';
+
+  const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>وصل مالي — ${student.fullName || student.id}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;700;800&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Tajawal', Arial, sans-serif;
+      direction: rtl;
+      background: #fff;
+      color: #1e293b;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .page {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 28px 32px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 3px solid #0d9488;
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+    }
+    .header-logo {
+      width: 52px;
+      height: 52px;
+      background: #0d9488;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      color: #fff;
+    }
+    .header-text h1 {
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .header-text p {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 600;
+    }
+    .header-id {
+      text-align: left;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .header-id strong {
+      display: block;
+      font-size: 12px;
+      color: #475569;
+      word-break: break-all;
+    }
+
+    /* ── Info Grid ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 20px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }
+    .info-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .info-label {
+      font-size: 10px;
+      color: #94a3b8;
+      font-weight: 600;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .info-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    /* ── Financial Summary ── */
+    .fin-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .fin-card {
+      border-radius: 10px;
+      padding: 12px 14px;
+      text-align: center;
+    }
+    .fin-card .fc-label {
+      font-size: 10px;
+      color: #64748b;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .fin-card .fc-value {
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .fin-card.total  { background: #f1f5f9; }
+    .fin-card.paid   { background: #f0fdf4; }
+    .fin-card.paid   .fc-value { color: #16a34a; }
+    .fin-card.remain { background: #fef2f2; }
+    .fin-card.remain .fc-value { color: #dc2626; }
+    .fin-card.total  .fc-value { color: #0f172a; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 5px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      color: ${statusColor};
+      border: 2px solid ${statusColor};
+      margin-bottom: 18px;
+    }
+
+    /* ── Payments Table ── */
+    h2 {
+      font-size: 14px;
+      font-weight: 800;
+      color: #0f766e;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    h2::before { content: ''; display: block; width: 4px; height: 18px; background: #0d9488; border-radius: 4px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-bottom: 24px;
+    }
+    thead tr {
+      background: #0d9488;
+      color: #fff;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: right;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    tbody tr:hover { background: #f0fdfa; }
+    td.amount { font-weight: 700; color: #0d9488; }
+
+    /* ── Receipt Images ── */
+    .receipt-page {
+      page-break-before: always;
+      padding: 24px 32px;
+      max-width: 820px;
+      margin: 0 auto;
+    }
+    .receipt-header {
+      border-bottom: 3px solid #0d9488;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+    .receipt-header h3 {
+      font-size: 16px;
+      font-weight: 800;
+      color: #0f766e;
+      margin-bottom: 6px;
+    }
+    .receipt-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 12px;
+      color: #475569;
+      background: #f0fdfa;
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+    .receipt-meta span { display: flex; gap: 4px; align-items: center; }
+    .receipt-meta strong { color: #0f766e; }
+    .receipt-img-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .receipt-img-wrap img {
+      max-width: 100%;
+      max-height: 85vh;
+      border-radius: 12px;
+      border: 1px solid #cbd5e1;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      object-fit: contain;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid #e2e8f0;
+      padding-top: 10px;
+      margin-top: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: #94a3b8;
+    }
+
+    @media print {
+      body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      .page { padding: 16px 20px; }
+      .receipt-page { padding: 16px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Main Page ── -->
+<div class="page">
+
+  <div class="header">
+    <div class="header-logo">🎓</div>
+    <div class="header-text" style="flex:1; margin: 0 14px;">
+      <h1>وثيقة متابعة الرسوم الدراسية</h1>
+      <p>كلية التخطيط العمراني / الدراسات العليا / المتابعة المالية</p>
+    </div>
+    <div class="header-id">
+      <span>رقم الوثيقة:</span>
+      <strong>${student.id}</strong>
+      <span style="display:block;margin-top:4px;">تاريخ الإصدار: ${new Date().toLocaleDateString('ar-IQ')}</span>
+    </div>
+  </div>
+
+  <!-- Student Info -->
+  <h2>بيانات الطالب</h2>
+  <div class="info-grid">
+    <div class="info-item">
+      <span class="info-label">الاسم الرباعي</span>
+      <span class="info-value">${student.fullName || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">القسم</span>
+      <span class="info-value">${student.department || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">نوع الدراسة</span>
+      <span class="info-value">${student.studyType || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">التخصص</span>
+      <span class="info-value">${student.specialization || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">نوع النفقة</span>
+      <span class="info-value">${student.expenseType || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">سنة القبول</span>
+      <span class="info-value">${student.admissionYear || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">سنة التخرج المتوقعة</span>
+      <span class="info-value">${student.graduationYear || '—'}</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">عدد الدفعات</span>
+      <span class="info-value">${payments.length} دفعة</span>
+    </div>
+  </div>
+
+  <!-- Financial Summary -->
+  <h2>الملخص المالي</h2>
+  <div class="fin-summary">
+    <div class="fin-card total">
+      <div class="fc-label">المبلغ المقرر الأصلي</div>
+      <div class="fc-value">${Number(f.totalFee).toLocaleString('ar-IQ')} د.ع</div>
+    </div>
+    <div class="fin-card paid">
+      <div class="fc-label">إجمالي المسدد</div>
+      <div class="fc-value">${Number(f.paidAmount).toLocaleString('ar-IQ')} د.ع</div>
+    </div>
+    <div class="fin-card remain">
+      <div class="fc-label">المبلغ المتبقي</div>
+      <div class="fc-value">${Number(f.remainingAmount).toLocaleString('ar-IQ')} د.ع</div>
+    </div>
+  </div>
+  <div style="text-align:center; margin-bottom:18px;">
+    <span class="status-badge">${f.status}</span>
+  </div>
+
+  <!-- Payments Table -->
+  ${payments.length > 0 ? `
+  <h2>سجل الدفعات التفصيلي</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>التاريخ</th>
+        <th>المبلغ</th>
+        <th>المدقق</th>
+        <th>الوصل</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${paymentRows}
+    </tbody>
+  </table>` : '<div style="text-align:center;color:#94a3b8;padding:20px;">لا توجد دفعات مسجلة</div>'}
+
+  <div class="footer">
+    <span>نظام متابعة الرسوم الدراسية — كلية التخطيط العمراني</span>
+    <span>تم الإصدار: ${new Date().toLocaleString('ar-IQ')}</span>
+  </div>
+
+</div>
+
+${receiptPages}
+
+<script>
+  window.onload = function() {
+    document.fonts.ready.then(function() {
+      setTimeout(function() { window.print(); }, 600);
+    });
+  };
+<\/script>
+</body>
+</html>`;
+
+  // ── 3. Open print window ───────────────────────────────────────
+  const win = window.open('', '_blank', 'width=900,height=700');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    showToast('جاري فتح نافذة الطباعة / PDF...', 'success');
+  } else {
+    showToast('تعذّر فتح نافذة الطباعة. تحقق من إعدادات النوافذ المنبثقة.', 'error');
+  }
 }
 
 // ============================================================
