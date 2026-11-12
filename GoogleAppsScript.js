@@ -93,6 +93,19 @@ function safeNum(v) {
   return isNaN(n) ? 0 : n;
 }
 
+function parseDiscountPercent(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') {
+    if (v > 0 && v <= 1) return Math.round(v * 100);
+    return Math.round(v);
+  }
+  var s = String(v).replace(/%/g, '').trim();
+  var n = parseFloat(s);
+  if (isNaN(n)) return 0;
+  if (n > 0 && n <= 1) return Math.round(n * 100);
+  return Math.round(n);
+}
+
 function computeStatus(totalFee, paidAmount) {
   if (totalFee === 0) return 'معفى / نفقة عامة';
   if (paidAmount === 0) return 'لم يتم التسديد';
@@ -228,7 +241,7 @@ function rowToStudent(row) {
     lastAuditor:    String(row[COL.LAST_AUDITOR] || ''),
     createdAt:      String(row[COL.CREATED_AT] || ''),
     receiptCount:   String(row[COL.RECEIPT_COUNT] || '0 وصولات'),
-    discountPercent:safeNum(row[COL.DISCOUNT_PERCENT]),
+    discountPercent:parseDiscountPercent(row[COL.DISCOUNT_PERCENT]),
     payments:       payments
   };
 }
@@ -280,7 +293,7 @@ function studentToRow(student) {
     receiptCellFormula = '=HYPERLINK("' + viewUrl + '", "🖼️ عرض الوصل")';
   }
 
-  var discountPercent = safeNum(student.discountPercent);
+  var discountPercent = parseDiscountPercent(student.discountPercent);
 
   var row = new Array(19).fill('');
   row[COL.ID]            = student.id || generateId();
@@ -555,7 +568,7 @@ function doPost(e) {
   var student = body.student || body;
 
   var totalFee = safeNum(student.totalFee);
-  if (totalFee === 0 && student.expenseType === 'نفقة خاصة') {
+  if (totalFee === 0 && String(student.expenseType).indexOf('نفقة خاصة') !== -1) {
     totalFee = DEFAULT_EXPENSE_FEE;
   }
   student.totalFee = totalFee;

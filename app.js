@@ -6,10 +6,11 @@
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec';
 
 const CREDENTIALS = {
-  postgrad: { password: '123', name: 'قسم الدراسات العليا' },
-  accounts: { password: '123', name: 'قسم الحسابات' }
+  postgrad: { password: '2030', name: 'قسم الدراسات العليا' },
+  accounts: { password: 'aabb2026', name: 'قسم الحسابات' }
 };
 
+const DELETE_PAYMENT_PIN = '565656';
 const DEFAULT_PRIVATE_FEE = 3750000;
 const RECEIPTS_KEY = 'receipts_v3';
 const SYNC_DELAY_MS = 2000;
@@ -33,6 +34,24 @@ function $(id) { return document.getElementById(id); }
 function fmt(n) {
   const num = Number(n) || 0;
   return num.toLocaleString('ar-IQ') + ' د.ع';
+}
+
+function parseDiscountPercent(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') {
+    if (val > 0 && val <= 1) return Math.round(val * 100);
+    return Math.round(val);
+  }
+  const s = String(val).replace(/%/g, '').trim();
+  const n = parseFloat(s);
+  if (isNaN(n) || n === 0) return 0;
+  if (n > 0 && n <= 1) return Math.round(n * 100);
+  return Math.round(n);
+}
+
+function formatDiscountPercent(val) {
+  const n = parseDiscountPercent(val);
+  return n + '%';
 }
 
 function genId() {
@@ -190,7 +209,7 @@ async function loadStudents() {
       totalFee:        Number(s.totalFee)  || 0,
       paidAmount:      Number(s.paidAmount)|| 0,
       remainingAmount: Number(s.remainingAmount) || 0,
-      discountPercent: Number(s.discountPercent) || 0,
+      discountPercent: parseDiscountPercent(s.discountPercent),
       payments: (s.payments || []).map(p => ({
         ...p,
         amount: Number(p.amount) || 0
@@ -487,7 +506,7 @@ function applyPostgradFilters(list) {
     const f = computeFinancials(s);
     if (search  && !s.fullName.toLowerCase().includes(search) &&
                    !s.department.toLowerCase().includes(search)) return false;
-    if (expense && s.expenseType !== expense) return false;
+    if (expense && !s.expenseType.includes(expense)) return false;
     if (status) {
       if (status === 'paid'    && !f.isPaid)             return false;
       if (status === 'partial' && (f.paidAmount === 0 || f.isPaid)) return false;
@@ -565,7 +584,6 @@ function openAddStudentModal() {
   }
   $('addStudentModal').classList.remove('hidden');
   $('addStudentForm').reset();
-  $('totalFeeField').value = DEFAULT_PRIVATE_FEE;
   if ($('discountPercentInput')) $('discountPercentInput').value = '';
   updateFeeFieldVisibility();
 }
@@ -574,31 +592,21 @@ function closeAddStudentModal() {
   $('addStudentModal').classList.add('hidden');
 }
 
-function handleDiscountChange() {
-  const discountInput = $('discountPercentInput');
-  const totalFeeInput = $('totalFeeField');
-  const expenseType = $('expenseTypeSelect') ? $('expenseTypeSelect').value : 'نفقة خاصة';
-  if (!discountInput || !totalFeeInput) return;
-
-  if (expenseType === 'نفقة خاصة') {
-    const val = discountInput.value.trim();
-    if (val === '') {
-      totalFeeInput.value = DEFAULT_PRIVATE_FEE;
-    } else {
-      const discount = Math.max(0, Math.min(100, Number(val) || 0));
-      totalFeeInput.value = Math.round(DEFAULT_PRIVATE_FEE * (1 - discount / 100));
-    }
-  }
-}
-
 function updateFeeFieldVisibility() {
-  const expenseType = $('expenseTypeSelect').value;
+  const select = $('expenseTypeSelect');
+  if (!select) return;
+  const val = select.value || '';
+  const selectedOption = select.options[select.selectedIndex];
+  const defaultFee = selectedOption && selectedOption.dataset.fee !== undefined
+    ? Number(selectedOption.dataset.fee)
+    : (val.includes('4,250,000') ? 4250000 : (val.includes('نفقة خاصة') ? 3750000 : 0));
+
   const feeRow = $('feeRow');
   const discountRow = $('discountRow');
-  if (expenseType === 'نفقة خاصة') {
+  if (val.includes('نفقة خاصة')) {
     if (feeRow) feeRow.classList.remove('hidden');
     if (discountRow) discountRow.classList.remove('hidden');
-    handleDiscountChange();
+    if ($('totalFeeField')) $('totalFeeField').value = defaultFee;
   } else {
     if (feeRow) feeRow.classList.add('hidden');
     if (discountRow) discountRow.classList.add('hidden');
@@ -610,11 +618,13 @@ function updateFeeFieldVisibility() {
 async function submitAddStudentForm(e) {
   e.preventDefault();
   const expenseType = $('expenseTypeSelect').value;
-  let   totalFee    = expenseType === 'نفقة خاصة'
-                      ? (Number($('totalFeeField').value) || DEFAULT_PRIVATE_FEE)
+  const isPrivate   = expenseType.includes('نفقة خاصة');
+  const defaultFee  = expenseType.includes('4,250,000') ? 4250000 : 3750000;
+  let   totalFee    = isPrivate
+                      ? (Number($('totalFeeField').value) || defaultFee)
                       : 0;
-  const discountPercent = expenseType === 'نفقة خاصة'
-                      ? (Number($('discountPercentInput')?.value) || 0)
+  const discountPercent = isPrivate
+                      ? parseDiscountPercent($('discountPercentInput')?.value)
                       : 0;
 
   const student = {
@@ -744,7 +754,7 @@ function renderStudentDetail(id) {
         </div>
         <div class="text-center bg-purple-50 rounded-xl p-3 border border-purple-100">
           <div class="text-xs text-purple-700 font-semibold mb-1">نسبة التخفيض</div>
-          <div class="font-bold text-purple-800 text-base">${Number(student.discountPercent || 0)}%</div>
+          <div class="font-bold text-purple-800 text-base">${formatDiscountPercent(student.discountPercent)}</div>
         </div>
         <div class="text-center bg-green-50 rounded-xl p-3 border border-green-100">
           <div class="text-xs text-green-700 font-semibold mb-1">إجمالي المسدد</div>
@@ -950,9 +960,13 @@ async function submitPayment(studentId) {
 }
 
 function confirmDeletePayment(studentId, paymentId) {
-  if (confirm('هل أنت متأكد من حذف هذه الدفعة؟')) {
-    removePaymentFromStudent(studentId, paymentId);
+  const pin = prompt('🔒 حماية حذف الدفعة:\nأدخل الرمز السري لتأكيد حذف هذه الدفعة:');
+  if (pin === null) return; // User pressed Cancel
+  if (pin.trim() !== DELETE_PAYMENT_PIN) {
+    showToast('❌ الرمز السري غير صحيح! لا يمكن حذف الدفعة', 'error');
+    return;
   }
+  removePaymentFromStudent(studentId, paymentId);
 }
 
 async function viewReceipt(paymentId) {
@@ -1456,7 +1470,7 @@ async function exportStudentPDF(id) {
     </div>
     <div class="info-item">
       <span class="info-label">نسبة التخفيض</span>
-      <span class="info-value">${Number(student.discountPercent || 0)}%</span>
+      <span class="info-value">${formatDiscountPercent(student.discountPercent)}</span>
     </div>
   </div>
 
@@ -1469,7 +1483,7 @@ async function exportStudentPDF(id) {
     </div>
     <div class="fin-card" style="background:#faf5ff;">
       <div class="fc-label" style="color:#7e22ce;">نسبة التخفيض</div>
-      <div class="fc-value" style="color:#6b21a8;">${Number(student.discountPercent || 0)}%</div>
+      <div class="fc-value" style="color:#6b21a8;">${formatDiscountPercent(student.discountPercent)}</div>
     </div>
     <div class="fin-card paid">
       <div class="fc-label">إجمالي المسدد</div>
