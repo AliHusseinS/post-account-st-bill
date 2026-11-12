@@ -337,10 +337,18 @@
 
         <!-- Total Fee (dynamic) -->
         <div id="feeRow">
-          <label class="block text-sm font-semibold text-gray-700 mb-1">المبلغ المقرر الأصلي (د.ع)</label>
+          <label class="block text-sm font-semibold text-gray-700 mb-1">المبلغ المقرر (د.ع)</label>
           <input id="totalFeeField" type="number" min="0" step="1000"
             class="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-teal-400"
             placeholder="3750000">
+        </div>
+
+        <!-- Discount Percentage -->
+        <div id="discountRow">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">نسبة التخفيض (%)</label>
+          <input id="discountPercentInput" type="number" min="0" max="100" step="1"
+            class="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-teal-400"
+            placeholder="أدخل نسبة التخفيض (مثال: 10 أو 20)">
         </div>
 
         <!-- Department -->

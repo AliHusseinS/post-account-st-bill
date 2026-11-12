@@ -26,7 +26,8 @@ var COL = {
   CREATED_AT:   14,  // O - تاريخ الإضافة
   RECEIPT_COUNT:15,  // P - عدد الوصولات
   PAYMENTS_JSON:16,  // Q - سجل الدفعات (JSON)
-  RECEIPT_IMAGE:17   // R - صورة الوصل (=HYPERLINK / =IMAGE)
+  RECEIPT_IMAGE:17,  // R - صورة الوصل (=HYPERLINK / =IMAGE)
+  DISCOUNT_PERCENT: 18 // S - نسبة التخفيض
 };
 
 var HEADERS = [
@@ -47,7 +48,8 @@ var HEADERS = [
   'تاريخ الإضافة',
   'عدد الوصولات',
   'سجل الدفعات',
-  'صورة الوصل'
+  'صورة الوصل',
+  'نسبة التخفيض'
 ];
 
 var SHEET_NAME = 'Sheet1';
@@ -76,7 +78,7 @@ function hasHeaderRow(sheet) {
   if (sheet.getLastRow() === 0) return false;
   var col9  = String(sheet.getRange(1, 9).getValue() || '').trim();
   var col18 = String(sheet.getRange(1, 18).getValue() || '').trim();
-  return col9 === 'المبلغ المقرر الأصلي' && col18 === 'صورة الوصل';
+  return (col9 === 'المبلغ المقرر الأصلي' || col9 === 'المبلغ المقرر') && (col18 === 'صورة الوصل' || col18 === 'نسبة التخفيض');
 }
 
 function generateId() {
@@ -226,6 +228,7 @@ function rowToStudent(row) {
     lastAuditor:    String(row[COL.LAST_AUDITOR] || ''),
     createdAt:      String(row[COL.CREATED_AT] || ''),
     receiptCount:   String(row[COL.RECEIPT_COUNT] || '0 وصولات'),
+    discountPercent:safeNum(row[COL.DISCOUNT_PERCENT]),
     payments:       payments
   };
 }
@@ -277,7 +280,9 @@ function studentToRow(student) {
     receiptCellFormula = '=HYPERLINK("' + viewUrl + '", "🖼️ عرض الوصل")';
   }
 
-  var row = new Array(18).fill('');
+  var discountPercent = safeNum(student.discountPercent);
+
+  var row = new Array(19).fill('');
   row[COL.ID]            = student.id || generateId();
   row[COL.FULL_NAME]     = student.fullName || '';
   row[COL.EXPENSE_TYPE]  = student.expenseType || '';
@@ -296,6 +301,7 @@ function studentToRow(student) {
   row[COL.RECEIPT_COUNT] = paymentsClean.length + ' وصولات';
   row[COL.PAYMENTS_JSON] = JSON.stringify(paymentsClean);
   row[COL.RECEIPT_IMAGE] = receiptCellFormula;
+  row[COL.DISCOUNT_PERCENT] = discountPercent > 0 ? (discountPercent + '%') : '0%';
   return row;
 }
 
@@ -385,6 +391,14 @@ function migrateOldData(sheet) {
 function ensureHeader(sheet) {
   if (!hasHeaderRow(sheet)) {
     migrateOldData(sheet);
+  } else {
+    var lastCol = sheet.getLastColumn();
+    if (lastCol < HEADERS.length) {
+      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+      try {
+        sheet.getRange(1, 19).setFontWeight('bold');
+      } catch (e) {}
+    }
   }
 }
 

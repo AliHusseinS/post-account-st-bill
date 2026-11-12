@@ -187,9 +187,10 @@ async function loadStudents() {
     // Normalize numeric fields from sheet
     const normalized = raw.map(s => ({
       ...s,
-      totalFee:  Number(s.totalFee)  || 0,
-      paidAmount:Number(s.paidAmount)|| 0,
+      totalFee:        Number(s.totalFee)  || 0,
+      paidAmount:      Number(s.paidAmount)|| 0,
       remainingAmount: Number(s.remainingAmount) || 0,
+      discountPercent: Number(s.discountPercent) || 0,
       payments: (s.payments || []).map(p => ({
         ...p,
         amount: Number(p.amount) || 0
@@ -239,32 +240,34 @@ async function saveStudent(student) {
     }));
 
     const payload = {
-      action:         'save',
+      action:          'save',
       // Flat fields (old Apps Script compatibility)
-      id:             student.id,
-      fullName:       student.fullName       || '',
-      expenseType:    student.expenseType    || '',
-      department:     student.department     || '',
-      studyType:      student.studyType      || '',
-      specialization: student.specialization || '',
-      admissionYear:  student.admissionYear  || '',
-      graduationYear: student.graduationYear || '',
-      totalFee:       Number(student.totalFee) || 0,
-      createdAt:      student.createdAt      || new Date().toISOString(),
-      payments:       paymentsClean,
+      id:              student.id,
+      fullName:        student.fullName       || '',
+      expenseType:     student.expenseType    || '',
+      department:      student.department     || '',
+      studyType:       student.studyType      || '',
+      specialization:  student.specialization || '',
+      admissionYear:   student.admissionYear  || '',
+      graduationYear:  student.graduationYear || '',
+      totalFee:        Number(student.totalFee) || 0,
+      discountPercent: Number(student.discountPercent) || 0,
+      createdAt:       student.createdAt      || new Date().toISOString(),
+      payments:        paymentsClean,
       // Nested student object (new Apps Script compatibility)
       student: {
-        id:             student.id,
-        fullName:       student.fullName       || '',
-        expenseType:    student.expenseType    || '',
-        department:     student.department     || '',
-        studyType:      student.studyType      || '',
-        specialization: student.specialization || '',
-        admissionYear:  student.admissionYear  || '',
-        graduationYear: student.graduationYear || '',
-        totalFee:       Number(student.totalFee) || 0,
-        createdAt:      student.createdAt      || new Date().toISOString(),
-        payments:       paymentsClean
+        id:              student.id,
+        fullName:        student.fullName       || '',
+        expenseType:     student.expenseType    || '',
+        department:      student.department     || '',
+        studyType:       student.studyType      || '',
+        specialization:  student.specialization || '',
+        admissionYear:   student.admissionYear  || '',
+        graduationYear:  student.graduationYear || '',
+        totalFee:        Number(student.totalFee) || 0,
+        discountPercent: Number(student.discountPercent) || 0,
+        createdAt:       student.createdAt      || new Date().toISOString(),
+        payments:        paymentsClean
       }
     };
 
@@ -563,6 +566,7 @@ function openAddStudentModal() {
   $('addStudentModal').classList.remove('hidden');
   $('addStudentForm').reset();
   $('totalFeeField').value = DEFAULT_PRIVATE_FEE;
+  if ($('discountPercentInput')) $('discountPercentInput').value = '';
   updateFeeFieldVisibility();
 }
 
@@ -570,15 +574,36 @@ function closeAddStudentModal() {
   $('addStudentModal').classList.add('hidden');
 }
 
+function handleDiscountChange() {
+  const discountInput = $('discountPercentInput');
+  const totalFeeInput = $('totalFeeField');
+  const expenseType = $('expenseTypeSelect') ? $('expenseTypeSelect').value : 'نفقة خاصة';
+  if (!discountInput || !totalFeeInput) return;
+
+  if (expenseType === 'نفقة خاصة') {
+    const val = discountInput.value.trim();
+    if (val === '') {
+      totalFeeInput.value = DEFAULT_PRIVATE_FEE;
+    } else {
+      const discount = Math.max(0, Math.min(100, Number(val) || 0));
+      totalFeeInput.value = Math.round(DEFAULT_PRIVATE_FEE * (1 - discount / 100));
+    }
+  }
+}
+
 function updateFeeFieldVisibility() {
   const expenseType = $('expenseTypeSelect').value;
   const feeRow = $('feeRow');
+  const discountRow = $('discountRow');
   if (expenseType === 'نفقة خاصة') {
-    feeRow.classList.remove('hidden');
-    $('totalFeeField').value = $('totalFeeField').value || DEFAULT_PRIVATE_FEE;
+    if (feeRow) feeRow.classList.remove('hidden');
+    if (discountRow) discountRow.classList.remove('hidden');
+    handleDiscountChange();
   } else {
-    feeRow.classList.add('hidden');
-    $('totalFeeField').value = 0;
+    if (feeRow) feeRow.classList.add('hidden');
+    if (discountRow) discountRow.classList.add('hidden');
+    if ($('totalFeeField')) $('totalFeeField').value = 0;
+    if ($('discountPercentInput')) $('discountPercentInput').value = '';
   }
 }
 
@@ -587,6 +612,9 @@ async function submitAddStudentForm(e) {
   const expenseType = $('expenseTypeSelect').value;
   let   totalFee    = expenseType === 'نفقة خاصة'
                       ? (Number($('totalFeeField').value) || DEFAULT_PRIVATE_FEE)
+                      : 0;
+  const discountPercent = expenseType === 'نفقة خاصة'
+                      ? (Number($('discountPercentInput')?.value) || 0)
                       : 0;
 
   const student = {
@@ -599,6 +627,7 @@ async function submitAddStudentForm(e) {
     admissionYear:  $('admissionYearInput').value.trim(),
     graduationYear: $('graduationYearInput').value.trim(),
     totalFee,
+    discountPercent,
     payments:       [],
     createdAt:      new Date().toISOString()
   };
@@ -708,17 +737,21 @@ function renderStudentDetail(id) {
       <h3 class="text-lg font-bold text-teal-700 mb-4 flex items-center gap-2">
         <span>💰</span> بيانات الدفع
       </h3>
-      <div class="grid grid-cols-3 gap-4 mb-4">
-        <div class="text-center bg-gray-50 rounded-xl p-3">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <div class="text-center bg-gray-50 rounded-xl p-3 border border-gray-100">
           <div class="text-xs text-gray-500 mb-1">المبلغ المقرر</div>
           <div class="font-bold text-gray-800">${fmt(f.totalFee)}</div>
         </div>
-        <div class="text-center bg-green-50 rounded-xl p-3">
-          <div class="text-xs text-gray-500 mb-1">إجمالي المسدد</div>
+        <div class="text-center bg-purple-50 rounded-xl p-3 border border-purple-100">
+          <div class="text-xs text-purple-700 font-semibold mb-1">نسبة التخفيض</div>
+          <div class="font-bold text-purple-800 text-base">${Number(student.discountPercent || 0)}%</div>
+        </div>
+        <div class="text-center bg-green-50 rounded-xl p-3 border border-green-100">
+          <div class="text-xs text-green-700 font-semibold mb-1">إجمالي المسدد</div>
           <div class="font-bold text-green-700">${fmt(f.paidAmount)}</div>
         </div>
-        <div class="text-center bg-red-50 rounded-xl p-3">
-          <div class="text-xs text-gray-500 mb-1">المتبقي</div>
+        <div class="text-center bg-red-50 rounded-xl p-3 border border-red-100">
+          <div class="text-xs text-red-700 font-semibold mb-1">المتبقي</div>
           <div class="font-bold text-red-600">${fmt(f.remainingAmount)}</div>
         </div>
       </div>
@@ -1421,14 +1454,22 @@ async function exportStudentPDF(id) {
       <span class="info-label">عدد الدفعات</span>
       <span class="info-value">${payments.length} دفعة</span>
     </div>
+    <div class="info-item">
+      <span class="info-label">نسبة التخفيض</span>
+      <span class="info-value">${Number(student.discountPercent || 0)}%</span>
+    </div>
   </div>
 
   <!-- Financial Summary -->
   <h2>بيانات الدفع</h2>
-  <div class="fin-summary">
+  <div class="fin-summary" style="grid-template-columns: repeat(4, 1fr);">
     <div class="fin-card total">
       <div class="fc-label">المبلغ المقرر</div>
       <div class="fc-value">${Number(f.totalFee).toLocaleString('ar-IQ')} د.ع</div>
+    </div>
+    <div class="fin-card" style="background:#faf5ff;">
+      <div class="fc-label" style="color:#7e22ce;">نسبة التخفيض</div>
+      <div class="fc-value" style="color:#6b21a8;">${Number(student.discountPercent || 0)}%</div>
     </div>
     <div class="fin-card paid">
       <div class="fc-label">إجمالي المسدد</div>
@@ -1511,6 +1552,7 @@ function exportAllExcel() {
       'سنة القبول':    s.admissionYear,
       'سنة التخرج':    s.graduationYear,
       'المبلغ المقرر': f.totalFee,
+      'نسبة التخفيض': (s.discountPercent || 0) + '%',
       'إجمالي المسدد': f.paidAmount,
       'المتبقي':       f.remainingAmount,
       'الحالة':        f.status,
@@ -1538,6 +1580,9 @@ function init() {
 
   const expSelect = $('expenseTypeSelect');
   if (expSelect) expSelect.addEventListener('change', updateFeeFieldVisibility);
+
+  const discountInput = $('discountPercentInput');
+  if (discountInput) discountInput.addEventListener('input', handleDiscountChange);
 
   // FAB
   const fab = $('fabAddStudent');
