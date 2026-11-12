@@ -139,6 +139,21 @@ function deleteReceiptImage(payId) {
   } catch (e) {}
 }
 
+function deleteStudentReceipts(studentId) {
+  if (!studentId) return;
+  try {
+    var sheet = getReceiptsSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return;
+    var data = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+    for (var i = data.length - 1; i >= 0; i--) {
+      if (String(data[i][0]).trim() === String(studentId).trim()) {
+        sheet.deleteRow(i + 2);
+      }
+    }
+  } catch (e) {}
+}
+
 function getAllReceiptsMap() {
   var map = {};
   try {
@@ -455,6 +470,7 @@ function doGet(e) {
       if (String(idValues[i][0]).trim() === deleteId) {
         sheet.deleteRow(i + 2);
         deleted = true;
+        deleteStudentReceipts(deleteId);
         break;
       }
     }
@@ -514,6 +530,7 @@ function doPost(e) {
       if (String(idValues[i][0]).trim() === deleteId) {
         sheet.deleteRow(i + 2);
         deleted = true;
+        deleteStudentReceipts(deleteId);
         break;
       }
     }
