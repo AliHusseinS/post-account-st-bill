@@ -703,10 +703,10 @@ function renderStudentDetail(id) {
       </div>
     </div>
 
-    <!-- Financial Summary -->
+    <!-- Payment Details -->
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-5">
       <h3 class="text-lg font-bold text-teal-700 mb-4 flex items-center gap-2">
-        <span>💰</span> الملخص المالي
+        <span>💰</span> بيانات الدفع
       </h3>
       <div class="grid grid-cols-3 gap-4 mb-4">
         <div class="text-center bg-gray-50 rounded-xl p-3">
