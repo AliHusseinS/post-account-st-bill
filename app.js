@@ -22,6 +22,8 @@ let currentUser = null;
 let selectedStudentId = null;
 let pendingReceiptBase64 = null;
 let isSyncing = false;
+let activeReceiptPayment = null;
+let activeReceiptStudent = null;
 
 // ============================================================
 // UTILITIES
@@ -123,10 +125,19 @@ function mergeReceiptsIntoStudents(studentsArr) {
     const studentCache = cache[s.id] || {};
     return {
       ...s,
-      payments: (s.payments || []).map(p => ({
-        ...p,
-        receiptImage: studentCache[p.id] || null
-      }))
+      payments: (s.payments || []).map(p => {
+        const cachedImg = studentCache[p.id];
+        const serverImg = p.receiptImage;
+        const finalImg  = cachedImg || serverImg || null;
+        if (serverImg && !cachedImg) {
+          storeReceiptImage(s.id, p.id, serverImg);
+        }
+        return {
+          ...p,
+          receiptImage: finalImg,
+          hasReceipt: Boolean(finalImg || p.hasReceipt || p.receiptUrl)
+        };
+      })
     };
   });
 }
@@ -911,50 +922,150 @@ function confirmDeletePayment(studentId, paymentId) {
   }
 }
 
-function viewReceipt(paymentId) {
+async function viewReceipt(paymentId) {
   const student = students.find(s => s.id === selectedStudentId);
   if (!student) return;
   const payment = (student.payments || []).find(p => p.id === paymentId);
   if (!payment) { showToast('الدفعة غير موجودة', 'warning'); return; }
 
-  const imgSrc = payment.receiptImage || payment.receiptViewUrl || payment.receiptUrl;
+  activeReceiptStudent = student;
+  activeReceiptPayment = payment;
+
+  // Retrieve base64 image if available
+  let imgSrc = payment.receiptImage;
   if (!imgSrc) {
-    // Open directly via backend WebApp endpoint
-    const backendUrl = `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(paymentId)}`;
-    window.open(backendUrl, '_blank');
+    const cache = loadReceiptsCache();
+    imgSrc = (cache[student.id] && cache[student.id][paymentId]) || null;
+  }
+
+  const modal = $('receiptModal');
+  const modalImg = $('receiptModalImg');
+  const modalLoading = $('receiptModalLoading');
+  const studentEl = $('receiptModalStudent');
+  const amountEl = $('receiptModalAmount');
+  const dateEl = $('receiptModalDate');
+  const auditorEl = $('receiptModalAuditor');
+
+  if (!modal) return;
+
+  if (studentEl) studentEl.textContent = student.fullName || 'طالب';
+  if (amountEl)  amountEl.textContent  = fmt(payment.amount);
+  if (dateEl)    dateEl.textContent    = payment.date || '-';
+  if (auditorEl) auditorEl.textContent = payment.auditor || '-';
+
+  modal.classList.remove('hidden');
+
+  if (imgSrc && String(imgSrc).startsWith('data:image')) {
+    payment.receiptImage = imgSrc;
+    if (modalLoading) modalLoading.classList.add('hidden');
+    if (modalImg) {
+      modalImg.src = imgSrc;
+      modalImg.classList.remove('hidden');
+    }
+  } else {
+    // Show spinner and fetch image from server
+    if (modalImg) modalImg.classList.add('hidden');
+    if (modalLoading) modalLoading.classList.remove('hidden');
+
+    try {
+      const res = await fetch(`${SCRIPT_URL}?action=get_receipt&id=${encodeURIComponent(paymentId)}`);
+      const data = await res.json();
+      if (data && data.receiptImage) {
+        payment.receiptImage = data.receiptImage;
+        storeReceiptImage(student.id, paymentId, data.receiptImage);
+        if (modalImg) {
+          modalImg.src = data.receiptImage;
+          modalImg.classList.remove('hidden');
+        }
+        if (modalLoading) modalLoading.classList.add('hidden');
+      } else if (payment.receiptUrl) {
+        closeReceiptModal();
+        window.open(payment.receiptUrl, '_blank');
+      } else {
+        if (modalLoading) modalLoading.classList.add('hidden');
+        showToast('لم يتم العثور على صورة الوصل', 'warning');
+      }
+    } catch (err) {
+      console.warn('Fetch receipt error:', err);
+      if (modalLoading) modalLoading.classList.add('hidden');
+      if (payment.receiptUrl) {
+        closeReceiptModal();
+        window.open(payment.receiptUrl, '_blank');
+      } else {
+        showToast('تعذر تحميل صورة الوصل', 'error');
+      }
+    }
+  }
+}
+
+function closeReceiptModal() {
+  const modal = $('receiptModal');
+  if (modal) modal.classList.add('hidden');
+  const modalImg = $('receiptModalImg');
+  if (modalImg) modalImg.src = '';
+  const modalLoading = $('receiptModalLoading');
+  if (modalLoading) modalLoading.classList.add('hidden');
+  activeReceiptPayment = null;
+  activeReceiptStudent = null;
+}
+
+function printReceiptModal() {
+  if (!activeReceiptStudent || !activeReceiptPayment) return;
+  const modalImg = $('receiptModalImg');
+  const imgSrc = modalImg ? modalImg.src : (activeReceiptPayment.receiptImage || '');
+  if (!imgSrc || !imgSrc.startsWith('data:image')) {
+    showToast('لا توجد صورة جاهزة للطباعة', 'warning');
     return;
   }
 
-  // Open in a clean viewer window
   const win = window.open('', '_blank');
   if (win) {
     win.document.write(`<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>وصل تسديد — ${escHtml(student.fullName || '')}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>وصل تسديد — ${escHtml(activeReceiptStudent.fullName || '')}</title>
   <style>
-    body { margin:0; padding:20px; background:#0f172a; color:#fff; font-family:system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; min-height:100vh; box-sizing:border-box; }
-    .card { background:#1e293b; border:1px solid #334155; border-radius:16px; padding:24px; text-align:center; max-width:96vw; }
-    .title { font-size:18px; font-weight:bold; color:#5eead4; margin-bottom:8px; }
-    .meta { font-size:13px; color:#94a3b8; margin-bottom:16px; }
-    img { max-width:100%; max-height:78vh; border-radius:12px; border:1px solid #475569; box-shadow:0 12px 35px rgba(0,0,0,0.5); }
-    .btn { margin-top:16px; padding:10px 24px; background:#0d9488; color:#fff; font-weight:bold; border-radius:8px; border:none; cursor:pointer; font-size:14px; }
+    body { margin:0; padding:24px; font-family:system-ui,sans-serif; text-align:center; color:#1e293b; background:#f8fafc; }
+    .card { max-width:820px; margin:0 auto; background:#fff; border:2px solid #0d9488; border-radius:16px; padding:24px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1); }
+    h2 { color:#0f766e; margin:0 0 6px 0; font-size:22px; }
+    .sub { font-size:13px; color:#64748b; margin-bottom:16px; font-weight:600; }
+    .meta { font-size:14px; margin-bottom:20px; padding:12px; background:#f0fdfa; border-radius:10px; border:1px solid #ccfbf1; display:flex; justify-content:space-around; flex-wrap:wrap; gap:8px; }
+    .meta span { color:#0f766e; font-weight:bold; }
+    img { max-width:100%; max-height:74vh; border-radius:12px; border:1px solid #cbd5e1; object-fit:contain; }
+    @media print {
+      body { padding:0; background:#fff; }
+      .card { border:none; box-shadow:none; padding:10px; max-width:100%; }
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="title">وصل تسديد رسمي — كلية التخطيط العمراني</div>
-    <div class="meta">الطالب: ${escHtml(student.fullName || '')} | المبلغ: ${Number(payment.amount||0).toLocaleString('ar-IQ')} د.ع | التاريخ: ${escHtml(payment.date||'')} | المدقق: ${escHtml(payment.auditor||'')}</div>
-    <img src="${imgSrc}" alt="صورة الوصل"><br>
-    <button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button>
+    <h2>وصل تسديد رسمي</h2>
+    <div class="sub">كلية التخطيط العمراني / الدراسات العليا / المتابعة المالية</div>
+    <div class="meta">
+      <div>الطالب: <span>${escHtml(activeReceiptStudent.fullName || '')}</span></div>
+      <div>المبلغ: <span>${Number(activeReceiptPayment.amount || 0).toLocaleString('ar-IQ')} د.ع</span></div>
+      <div>التاريخ: <span>${escHtml(activeReceiptPayment.date || '-')}</span></div>
+      <div>المدقق: <span>${escHtml(activeReceiptPayment.auditor || '-')}</span></div>
+    </div>
+    <img src="${imgSrc}" alt="صورة الوصل">
   </div>
+  <script>
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 350);
+    };
+  <\/script>
 </body>
 </html>`);
-  } else {
-    window.location.href = imgSrc;
+    win.document.close();
   }
+}
+
+function openReceiptInNewTab() {
+  if (!activeReceiptPayment) return;
+  const webAppUrl = activeReceiptPayment.receiptUrl || `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(activeReceiptPayment.id)}`;
+  window.open(webAppUrl, '_blank');
 }
 
 // ============================================================
@@ -1079,6 +1190,22 @@ function init() {
   const modalOverlay = $('modalOverlay');
   if (modalOverlay) modalOverlay.addEventListener('click', (e) => {
     if (e.target === modalOverlay) closeAddStudentModal();
+  });
+
+  // Receipt modal close & backdrop
+  const receiptModal = $('receiptModal');
+  if (receiptModal) {
+    receiptModal.addEventListener('click', (e) => {
+      if (e.target === receiptModal) closeReceiptModal();
+    });
+  }
+
+  // Keyboard shortcut (Escape to close any modal)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeReceiptModal();
+      closeAddStudentModal();
+    }
   });
 
   // Export buttons

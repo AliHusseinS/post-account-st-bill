@@ -159,6 +159,28 @@ function getAllReceiptsMap() {
   return map;
 }
 
+function getReceiptDetails(payId) {
+  var res = { b64: '', stuName: '', date: '' };
+  if (!payId) return res;
+  try {
+    var sheet = getReceiptsSheet();
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return res;
+    var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][0]).trim() === String(payId).trim()) {
+        res.b64 = String(data[i][4] || '').trim();
+        res.stuName = String(data[i][2] || '').trim();
+        res.date = String(data[i][3] || '').trim();
+        break;
+      }
+    }
+  } catch (e) {
+    Logger.log('getReceiptDetails error: ' + e);
+  }
+  return res;
+}
+
 // ----------------------------------------------------------------
 // Row <-> Student Conversion
 // ----------------------------------------------------------------
@@ -367,19 +389,35 @@ function doGet(e) {
   var params = (e && e.parameter) ? e.parameter : {};
   var action = params.action || '';
 
-  // 1. VIEW RECEIPT — Opens receipt in browser directly
+  // 1. VIEW RECEIPT — Opens receipt in browser directly (e.g. from Google Sheet)
   if (action === 'view_receipt') {
     var viewPayId = String(params.id || '').trim();
-    var receiptsMap = getAllReceiptsMap();
-    var b64 = receiptsMap[viewPayId] || '';
+    var rec = getReceiptDetails(viewPayId);
+    var b64 = rec.b64;
 
     if (!b64) {
       var notFoundHtml = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الوصل غير موجود</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.box{text-align:center;padding:40px;background:#1e293b;border-radius:16px;border:1px solid #334155;}h2{color:#f87171;margin-bottom:8px;}p{color:#94a3b8;}</style></head><body><div class="box"><h2>⚠️ لم يتم العثور على صورة الوصل</h2><p>قد تكون الدفعة سُجلت بدون إرفاق صورة للوصل.</p></div></body></html>';
       return HtmlService.createHtmlOutput(notFoundHtml);
     }
 
-    var html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>وصل تسديد — كلية التخطيط العمراني</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:20px;background:#0f172a;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;box-sizing:border-box;}.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:24px;text-align:center;max-width:96vw;}h2{color:#5eead4;margin:0 0 16px 0;font-size:20px;}img{max-width:100%;max-height:80vh;border-radius:12px;border:1px solid #475569;box-shadow:0 12px 35px rgba(0,0,0,0.5);}.btn{margin-top:18px;padding:10px 28px;background:#0d9488;color:#fff;font-weight:bold;border-radius:10px;border:none;cursor:pointer;font-size:15px;}</style></head><body><div class="card"><h2>وصل تسديد رسمي — كلية التخطيط العمراني</h2><img src="' + b64 + '"><br><button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button></div></body></html>';
+    var metaInfo = '';
+    if (rec.stuName || rec.date) {
+      metaInfo = '<div style="color:#94a3b8;font-size:14px;margin-bottom:16px;padding:8px 16px;background:#0f172a;border-radius:8px;display:inline-block;">' +
+        (rec.stuName ? ('الطالب: <strong style="color:#5eead4;">' + rec.stuName + '</strong>') : '') +
+        (rec.stuName && rec.date ? ' &nbsp;|&nbsp; ' : '') +
+        (rec.date ? ('التاريخ: <strong style="color:#fff;">' + rec.date + '</strong>') : '') +
+        '</div><br>';
+    }
+
+    var html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>وصل تسديد — كلية التخطيط العمراني</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:20px;background:#0f172a;color:#fff;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;box-sizing:border-box;}.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:24px;text-align:center;max-width:96vw;}h2{color:#5eead4;margin:0 0 12px 0;font-size:20px;}img{max-width:100%;max-height:80vh;border-radius:12px;border:1px solid #475569;box-shadow:0 12px 35px rgba(0,0,0,0.5);}.btn{margin-top:18px;padding:10px 28px;background:#0d9488;color:#fff;font-weight:bold;border-radius:10px;border:none;cursor:pointer;font-size:15px;}</style></head><body><div class="card"><h2>وصل تسديد رسمي — كلية التخطيط العمراني</h2>' + metaInfo + '<img src="' + b64 + '"><br><button class="btn" onclick="window.print()">🖨️ طباعة الوصل</button></div></body></html>';
     return HtmlService.createHtmlOutput(html);
+  }
+
+  // 2. GET RECEIPT JSON — For client-side fetch
+  if (action === 'get_receipt') {
+    var getPayId = String(params.id || '').trim();
+    var recJson = getReceiptDetails(getPayId);
+    return corsOutput({ success: Boolean(recJson.b64), receiptImage: recJson.b64, studentName: recJson.stuName, date: recJson.date });
   }
 
   var sheet = getSheet();

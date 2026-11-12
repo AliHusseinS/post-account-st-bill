@@ -400,6 +400,84 @@
 </div>
 
 <!-- ================================================================
+     RECEIPT VIEWER MODAL
+================================================================ -->
+<div id="receiptModal"
+  class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden fade-in">
+    <!-- Modal Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">🧾</span>
+        <div>
+          <h2 class="text-base font-bold text-gray-800">وصل تسديد رسمي</h2>
+          <p class="text-xs text-teal-600 font-semibold">كلية التخطيط العمراني / الدراسات العليا / المتابعة المالية</p>
+        </div>
+      </div>
+      <button onclick="closeReceiptModal()"
+        class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 text-gray-500 transition-colors">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Metadata Banner -->
+    <div class="px-6 py-3 bg-teal-50 border-b border-teal-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+      <div>
+        <span class="text-gray-500 block">الطالب:</span>
+        <strong id="receiptModalStudent" class="text-gray-800 font-bold truncate block">-</strong>
+      </div>
+      <div>
+        <span class="text-gray-500 block">المبلغ:</span>
+        <strong id="receiptModalAmount" class="text-teal-700 font-bold block">-</strong>
+      </div>
+      <div>
+        <span class="text-gray-500 block">التاريخ:</span>
+        <strong id="receiptModalDate" class="text-gray-700 block">-</strong>
+      </div>
+      <div>
+        <span class="text-gray-500 block">المدقق:</span>
+        <strong id="receiptModalAuditor" class="text-gray-700 block">-</strong>
+      </div>
+    </div>
+
+    <!-- Modal Image Body -->
+    <div class="p-6 flex-1 overflow-y-auto flex items-center justify-center bg-gray-900/5 min-h-[300px]">
+      <img id="receiptModalImg"
+        class="max-h-[60vh] max-w-full rounded-xl border border-gray-200 shadow-md object-contain bg-white"
+        src="" alt="صورة الوصل">
+      <div id="receiptModalLoading" class="hidden text-center text-gray-500 py-12">
+        <svg class="animate-spin h-9 w-9 text-teal-600 mx-auto mb-3" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span class="font-medium text-sm">جاري تحميل صورة الوصل...</span>
+      </div>
+    </div>
+
+    <!-- Modal Footer -->
+    <div class="flex items-center justify-between px-6 py-3.5 border-t border-gray-100 bg-gray-50">
+      <div class="flex items-center gap-2">
+        <button type="button" onclick="printReceiptModal()"
+          class="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+          <span>🖨️</span> طباعة الوصل
+        </button>
+        <button type="button" onclick="openReceiptInNewTab()"
+          class="px-4 py-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+          <span>↗️</span> فتح في نافذة مستقلة
+        </button>
+      </div>
+      <button type="button" onclick="closeReceiptModal()"
+        class="px-5 py-2 rounded-xl text-gray-600 hover:bg-gray-200 font-semibold text-xs transition">
+        إغلاق
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
      APP JS
 ================================================================ -->
 <script src="app.js"></script>
