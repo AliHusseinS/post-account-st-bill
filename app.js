@@ -5,9 +5,10 @@
 // ============================================================
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec';
 
-const CREDENTIALS = {
-  postgrad: { password: '2030', name: 'قسم الدراسات العليا' },
-  accounts: { password: 'aabb2026', name: 'قسم الحسابات' }
+// Roles metadata (Authentication & passwords are securely managed in Google Apps Script)
+const ROLES = {
+  postgrad: { name: 'قسم الدراسات العليا' },
+  accounts: { name: 'قسم الحسابات' }
 };
 
 const DELETE_PAYMENT_PIN = '565656';
@@ -386,22 +387,49 @@ function setupLoginScreen() {
     });
   });
 
-  $('loginBtn').addEventListener('click', () => {
-    const password = $('passwordInput').value;
-    if (!selectedRole) { showToast('اختر الدور أولاً', 'warning'); return; }
-    const cred = CREDENTIALS[selectedRole];
-    if (!cred || password !== cred.password) {
-      showToast('كلمة المرور غير صحيحة', 'error'); return;
+  $('loginBtn').addEventListener('click', async () => {
+    const password = $('passwordInput').value.trim();
+    if (!selectedRole) {
+      showToast('اختر الدور أولاً', 'warning');
+      return;
     }
-    currentUser = { role: selectedRole, name: cred.name };
-    $('loginScreen').classList.add('hidden');
-    $('appShell').classList.remove('hidden');
-    $('userBadge').textContent = cred.name;
-    renderHeader();
-    loadStudents().then(() => {
-      if (selectedRole === 'postgrad') showPostgradView();
-      else showAccountsView();
-    });
+    if (!password) {
+      showToast('يرجى إدخال كلمة المرور', 'warning');
+      return;
+    }
+
+    const loginBtn = $('loginBtn');
+    const originalText = loginBtn.textContent;
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'جاري التحقق... ⏳';
+
+    try {
+      const url = `${SCRIPT_URL}?action=login&role=${encodeURIComponent(selectedRole)}&password=${encodeURIComponent(password)}`;
+      const res = await fetch(url, { method: 'GET' });
+      const data = await res.json();
+
+      if (!data || !data.success) {
+        showToast((data && data.error) || 'كلمة المرور غير صحيحة', 'error');
+        return;
+      }
+
+      const roleName = data.name || (ROLES[selectedRole] && ROLES[selectedRole].name) || 'المستخدم';
+      currentUser = { role: selectedRole, name: roleName };
+      $('loginScreen').classList.add('hidden');
+      $('appShell').classList.remove('hidden');
+      $('userBadge').textContent = roleName;
+      renderHeader();
+      loadStudents().then(() => {
+        if (selectedRole === 'postgrad') showPostgradView();
+        else showAccountsView();
+      });
+    } catch (err) {
+      console.error('Login verification error:', err);
+      showToast('خطأ في الاتصال بالخادم، يرجى المحاولة مرة أخرى', 'error');
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = originalText;
+    }
   });
 
   $('passwordInput').addEventListener('keydown', e => {
