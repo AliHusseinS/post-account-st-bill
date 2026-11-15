@@ -620,6 +620,13 @@ function closeAddStudentModal() {
   $('addStudentModal').classList.add('hidden');
 }
 
+function handleDiscountChange() {
+  // Discount is for display only and does not change total fee
+}
+
+window.openAddStudentModal = openAddStudentModal;
+window.closeAddStudentModal = closeAddStudentModal;
+
 function updateFeeFieldVisibility() {
   const select = $('expenseTypeSelect');
   if (!select) return;
