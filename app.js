@@ -3,7 +3,7 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxMA95blBl6oo55ZWo4aOoRASkMAQCKOKSTiKur8_XekQlQD3NyIOkAjiM6SQGsV9bq/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec';
 
 // Roles metadata (Authentication & passwords are securely managed in Google Apps Script)
 const ROLES = {
