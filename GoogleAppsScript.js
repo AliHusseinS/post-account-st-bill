@@ -6,6 +6,14 @@
 var SCRIPT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwCAmMVLdSUBe4cIu3nFOI7-DpsK9j_33RZ8edHilBnqyYiknlo7k7fWIc46AA5ASOd/exec';
 
 // ----------------------------------------------------------------
+// System Credentials (Protected server-side)
+// ----------------------------------------------------------------
+var CREDENTIALS = {
+  postgrad: { password: '2030', name: 'قسم الدراسات العليا' },
+  accounts: { password: 'aabb2026', name: 'قسم الحسابات' }
+};
+
+// ----------------------------------------------------------------
 // Column indices (0-based) for Sheet1
 // ----------------------------------------------------------------
 var COL = {
@@ -431,6 +439,18 @@ function doGet(e) {
   var params = (e && e.parameter) ? e.parameter : {};
   var action = params.action || '';
 
+  // 0. AUTH: Login validation
+  if (action === 'login') {
+    var role = String(params.role || '').trim();
+    var password = String(params.password || '').trim();
+    var cred = CREDENTIALS[role];
+    if (cred && cred.password === password) {
+      return corsOutput({ success: true, role: role, name: cred.name });
+    } else {
+      return corsOutput({ success: false, error: 'كلمة المرور غير صحيحة' });
+    }
+  }
+
   // 1. VIEW RECEIPT — Opens receipt in browser directly (e.g. from Google Sheet)
   if (action === 'view_receipt') {
     var viewPayId = String(params.id || '').trim();
@@ -544,6 +564,18 @@ function doPost(e) {
   }
 
   var action = body.action || 'save';
+
+  // AUTH: Login validation
+  if (action === 'login') {
+    var role = String(body.role || '').trim();
+    var password = String(body.password || '').trim();
+    var cred = CREDENTIALS[role];
+    if (cred && cred.password === password) {
+      return corsOutput({ success: true, role: role, name: cred.name });
+    } else {
+      return corsOutput({ success: false, error: 'كلمة المرور غير صحيحة' });
+    }
+  }
 
   // DELETE
   if (action === 'delete') {
