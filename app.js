@@ -228,7 +228,7 @@ async function loadStudents() {
   }
 }
 
-async function saveStudent(student) {
+async function saveStudent(student, newPayId = null) {
   // Optimistic update
   const idx = students.findIndex(s => s.id === student.id);
   if (idx >= 0) {
@@ -249,19 +249,23 @@ async function saveStudent(student) {
 
   // Send to sheet (no-cors for POST — we can't read the response, that's ok)
   try {
-    const paymentsClean = (student.payments || []).map(p => ({
-      id:             p.id,
-      amount:         Number(p.amount) || 0,
-      date:           p.date || '',
-      auditor:        p.auditor || '',
-      receiptUrl:     p.receiptUrl || '',
-      receiptViewUrl: p.receiptViewUrl || '',
-      receiptImage:   p.receiptImage || null
-    }));
+    const paymentsClean = (student.payments || []).map(p => {
+      const isNew = Boolean(newPayId && p.id === newPayId);
+      const isUnsavedDataUrl = Boolean(p.receiptImage && String(p.receiptImage).startsWith('data:image') && (!p.receiptUrl || isNew));
+      return {
+        id:             p.id,
+        amount:         Number(p.amount) || 0,
+        date:           p.date || '',
+        auditor:        p.auditor || '',
+        hasReceipt:     Boolean(p.hasReceipt || p.receiptImage || p.receiptUrl),
+        receiptUrl:     p.receiptUrl || '',
+        receiptViewUrl: p.receiptViewUrl || '',
+        receiptImage:   isUnsavedDataUrl ? p.receiptImage : null
+      };
+    });
 
     const payload = {
       action:          'save',
-      // Flat fields (old Apps Script compatibility)
       id:              student.id,
       fullName:        student.fullName       || '',
       expenseType:     student.expenseType    || '',
@@ -274,7 +278,6 @@ async function saveStudent(student) {
       discountPercent: Number(student.discountPercent) || 0,
       createdAt:       student.createdAt      || new Date().toISOString(),
       payments:        paymentsClean,
-      // Nested student object (new Apps Script compatibility)
       student: {
         id:              student.id,
         fullName:        student.fullName       || '',
@@ -336,16 +339,25 @@ async function addPaymentToStudent(studentId, payment) {
   const student = students.find(s => s.id === studentId);
   if (!student) { showToast('الطالب غير موجود', 'error'); return; }
 
+  const payId = genPayId();
+  const hasImg = Boolean(payment.receiptImage);
   const newPayment = {
-    id:           genPayId(),
-    amount:       Number(payment.amount) || 0,
-    date:         payment.date || todayISO(),
-    auditor:      payment.auditor || '',
-    receiptImage: payment.receiptImage || null
+    id:             payId,
+    amount:         Number(payment.amount) || 0,
+    date:           payment.date || todayISO(),
+    auditor:        payment.auditor || '',
+    receiptImage:   payment.receiptImage || null,
+    hasReceipt:     hasImg,
+    receiptUrl:     hasImg ? `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(payId)}` : '',
+    receiptViewUrl: hasImg ? `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(payId)}` : ''
   };
 
+  if (hasImg) {
+    storeReceiptImage(studentId, payId, payment.receiptImage);
+  }
+
   const updated = { ...student, payments: [...(student.payments || []), newPayment] };
-  await saveStudent(updated);
+  await saveStudent(updated, payId);
   showToast('تمت إضافة الدفعة بنجاح', 'success');
 }
 
@@ -883,12 +895,15 @@ function renderStudentDetail(id) {
                     <td class="py-2 px-3 font-semibold text-green-700">${fmt(p.amount)}</td>
                     <td class="py-2 px-3">${escHtml(p.auditor)}</td>
                     <td class="py-2 px-3 text-center">
-                      ${(p.receiptImage || p.receiptUrl || p.receiptViewUrl)
+                      ${(p.receiptImage || p.receiptUrl || p.hasReceipt)
                         ? `<button onclick="viewReceipt('${escHtml(p.id)}')"
                              class="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg hover:bg-blue-100 inline-flex items-center gap-1 mx-auto font-medium transition">
                              <span>🖼️</span> عرض
                            </button>`
-                        : '<span class="text-gray-300 text-xs">—</span>'
+                        : `<label class="text-xs bg-teal-50 text-teal-700 hover:bg-teal-100 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 mx-auto font-medium cursor-pointer transition" title="إرفاق صورة الوصل لهذه الدفعة">
+                             <span>📎</span> إرفاق وصل
+                             <input type="file" accept="image/*" class="hidden" onchange="attachReceiptToPayment('${escHtml(student.id)}', '${escHtml(p.id)}', this)">
+                           </label>`
                       }
                     </td>
                     <td class="py-2 px-3 text-center">
@@ -921,18 +936,13 @@ function cancelReceiptUpload() {
   if (preview) preview.classList.add('hidden');
 }
 
-function handleReceiptFile(input) {
-  const file = input.files[0];
-  if (!file) { cancelReceiptUpload(); return; }
-
+function compressImageFile(file, callback) {
   const reader = new FileReader();
   reader.onload = e => {
     const rawData = e.target.result;
     const img = new Image();
     img.onload = () => {
-      // Compress to max 800px width/height and quality 0.65
-      // This produces ~25KB to 30KB, which saves easily in Google Sheets
-      const maxDim = 800;
+      const maxDim = 750;
       let w = img.width;
       let h = img.height;
       if (w > maxDim || h > maxDim) {
@@ -949,28 +959,84 @@ function handleReceiptFile(input) {
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      pendingReceiptBase64 = canvas.toDataURL('image/jpeg', 0.65);
 
-      const preview = $('receiptPreview');
-      const imgEl   = $('receiptPreviewImg');
-      if (preview && imgEl) {
-        imgEl.src = pendingReceiptBase64;
-        preview.classList.remove('hidden');
+      // Adaptive compression
+      let q = 0.65;
+      let b64 = canvas.toDataURL('image/jpeg', q);
+      while (b64.length > 60000 && q > 0.35) {
+        q -= 0.1;
+        b64 = canvas.toDataURL('image/jpeg', q);
       }
+      callback(b64);
     };
     img.onerror = () => {
-      pendingReceiptBase64 = rawData;
-      const preview = $('receiptPreview');
-      const imgEl   = $('receiptPreviewImg');
-      if (preview && imgEl) {
-        imgEl.src = pendingReceiptBase64;
-        preview.classList.remove('hidden');
-      }
+      callback(rawData);
     };
     img.src = rawData;
   };
   reader.readAsDataURL(file);
 }
+
+function handleReceiptFile(input) {
+  const file = input.files[0];
+  if (!file) { cancelReceiptUpload(); return; }
+
+  compressImageFile(file, (b64) => {
+    pendingReceiptBase64 = b64;
+    const preview = $('receiptPreview');
+    const imgEl   = $('receiptPreviewImg');
+    if (preview && imgEl) {
+      imgEl.src = pendingReceiptBase64;
+      preview.classList.remove('hidden');
+    }
+  });
+}
+
+async function attachReceiptToPayment(studentId, paymentId, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  const student = students.find(s => s.id === studentId);
+  if (!student) return;
+  const payment = (student.payments || []).find(p => p.id === paymentId);
+  if (!payment) return;
+
+  showToast('جاري ضغط ورفع صورة الوصل...', 'info');
+
+  compressImageFile(file, async (base64) => {
+    payment.receiptImage = base64;
+    payment.hasReceipt = true;
+    payment.receiptUrl = `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(paymentId)}`;
+    payment.receiptViewUrl = payment.receiptUrl;
+
+    storeReceiptImage(studentId, paymentId, base64);
+    renderCurrentView();
+
+    try {
+      const payload = {
+        action: 'upload_receipt',
+        payId: paymentId,
+        studentId: studentId,
+        studentName: student.fullName || '',
+        date: payment.date || '',
+        receiptImage: base64
+      };
+      await fetch(SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      showToast('✅ تم حفظ صورة الوصل بنجاح', 'success');
+      setTimeout(loadStudents, SYNC_DELAY_MS);
+    } catch (err) {
+      console.error('attachReceiptToPayment error:', err);
+      showToast('تم حفظ الصورة محلياً وسيتم المزامنة لاحقاً', 'warning');
+    }
+  });
+}
+
+window.attachReceiptToPayment = attachReceiptToPayment;
 
 async function submitPayment(studentId) {
   const amountEl  = $('payAmountInput');
