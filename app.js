@@ -1225,7 +1225,7 @@ async function exportStudentPDF(id) {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>وصل مالي — ${student.fullName || student.id}</title>
+  <title>وصل  — ${student.fullName || student.id}</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;700;800&display=swap');
 
