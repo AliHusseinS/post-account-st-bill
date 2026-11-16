@@ -76,8 +76,8 @@ function getReceiptsSheet() {
   var sheet = ss.getSheetByName('Receipts');
   if (!sheet) {
     sheet = ss.insertSheet('Receipts');
-    sheet.getRange(1, 1, 1, 6).setValues([['معرف الدفعة', 'معرف الطالب', 'اسم الطالب', 'تاريخ الوصل', 'صورة الوصل (Base64)', 'تاريخ التخزين']]);
-    sheet.getRange(1, 1, 1, 6).setFontWeight('bold').setBackground('#0d9488').setFontColor('#ffffff');
+    sheet.getRange(1, 1, 1, 8).setValues([['معرف الدفعة', 'معرف الطالب', 'اسم الطالب', 'تاريخ الوصل', 'صورة الوصل (Base64 Chunk)', 'رقم الجزء', 'إجمالي الأجزاء', 'تاريخ التخزين']]);
+    sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#0d9488').setFontColor('#ffffff');
   }
   return sheet;
 }
@@ -123,24 +123,30 @@ function computeStatus(totalFee, paidAmount) {
 }
 
 // ----------------------------------------------------------------
-// Receipts Storage in Google Sheets (Persistent across all devices)
+// Receipts Storage in Google Sheets (Persistent across all devices, chunked for safety)
 // ----------------------------------------------------------------
+var RECEIPT_CHUNK_SIZE = 35000;
+
 function saveReceiptImage(payId, stuId, stuName, date, base64) {
   if (!payId || !base64) return;
   try {
+    deleteReceiptImage(payId);
     var sheet = getReceiptsSheet();
-    var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-      for (var i = 0; i < ids.length; i++) {
-        if (String(ids[i][0]).trim() === String(payId).trim()) {
-          sheet.getRange(i + 2, 5).setValue(base64);
-          sheet.getRange(i + 2, 6).setValue(new Date().toISOString());
-          return;
-        }
-      }
+    var b64Str = String(base64).trim();
+    var totalParts = Math.ceil(b64Str.length / RECEIPT_CHUNK_SIZE) || 1;
+    var rowsToAppend = [];
+    var nowStr = new Date().toISOString();
+
+    for (var i = 0; i < b64Str.length; i += RECEIPT_CHUNK_SIZE) {
+      var chunk = b64Str.substring(i, i + RECEIPT_CHUNK_SIZE);
+      var partIdx = Math.floor(i / RECEIPT_CHUNK_SIZE);
+      rowsToAppend.push([payId, stuId, stuName, date, chunk, partIdx, totalParts, nowStr]);
     }
-    sheet.appendRow([payId, stuId, stuName, date, base64, new Date().toISOString()]);
+
+    if (rowsToAppend.length > 0) {
+      var lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow + 1, 1, rowsToAppend.length, 8).setValues(rowsToAppend);
+    }
   } catch (e) {
     Logger.log('saveReceiptImage error: ' + e);
   }
@@ -156,10 +162,11 @@ function deleteReceiptImage(payId) {
     for (var i = ids.length - 1; i >= 0; i--) {
       if (String(ids[i][0]).trim() === String(payId).trim()) {
         sheet.deleteRow(i + 2);
-        break;
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.log('deleteReceiptImage error: ' + e);
+  }
 }
 
 function deleteStudentReceipts(studentId) {
@@ -174,22 +181,32 @@ function deleteStudentReceipts(studentId) {
         sheet.deleteRow(i + 2);
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.log('deleteStudentReceipts error: ' + e);
+  }
 }
 
 function getAllReceiptsMap() {
   var map = {};
+  var chunksMap = {};
   try {
     var sheet = getReceiptsSheet();
     var lastRow = sheet.getLastRow();
     if (lastRow <= 1) return map;
-    var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+    var numCols = Math.max(sheet.getLastColumn(), 6);
+    var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
     for (var i = 0; i < data.length; i++) {
-      var pId = String(data[i][0]).trim();
-      var b64 = String(data[i][4] || '').trim();
-      if (pId && b64) {
-        map[pId] = b64;
+      var pId = String(data[i][0] || '').trim();
+      var chunk = String(data[i][4] || '').trim();
+      var partIdx = (data[i][5] !== '' && !isNaN(data[i][5])) ? Number(data[i][5]) : 0;
+      if (pId && chunk) {
+        if (!chunksMap[pId]) chunksMap[pId] = [];
+        chunksMap[pId].push({ idx: partIdx, chunk: chunk });
       }
+    }
+    for (var payId in chunksMap) {
+      chunksMap[payId].sort(function(a, b) { return a.idx - b.idx; });
+      map[payId] = chunksMap[payId].map(function(c) { return c.chunk; }).join('');
     }
   } catch (e) {
     Logger.log('getAllReceiptsMap error: ' + e);
@@ -204,15 +221,20 @@ function getReceiptDetails(payId) {
     var sheet = getReceiptsSheet();
     var lastRow = sheet.getLastRow();
     if (lastRow <= 1) return res;
-    var data = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+    var numCols = Math.max(sheet.getLastColumn(), 6);
+    var data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+    var chunks = [];
     for (var i = 0; i < data.length; i++) {
-      if (String(data[i][0]).trim() === String(payId).trim()) {
-        res.b64 = String(data[i][4] || '').trim();
-        res.stuName = String(data[i][2] || '').trim();
-        res.date = String(data[i][3] || '').trim();
-        break;
+      if (String(data[i][0] || '').trim() === String(payId).trim()) {
+        if (!res.stuName) res.stuName = String(data[i][2] || '').trim();
+        if (!res.date) res.date = String(data[i][3] || '').trim();
+        var chunk = String(data[i][4] || '').trim();
+        var partIdx = (data[i][5] !== '' && !isNaN(data[i][5])) ? Number(data[i][5]) : chunks.length;
+        chunks.push({ idx: partIdx, chunk: chunk });
       }
     }
+    chunks.sort(function(a, b) { return a.idx - b.idx; });
+    res.b64 = chunks.map(function(c) { return c.chunk; }).join('');
   } catch (e) {
     Logger.log('getReceiptDetails error: ' + e);
   }
@@ -594,6 +616,46 @@ function doPost(e) {
       }
     }
     return corsOutput({ success: deleted, message: deleted ? 'Deleted' : 'Not found' });
+  }
+
+  // UPLOAD RECEIPT DIRECTLY
+  if (action === 'upload_receipt') {
+    var payId = String(body.payId || '').trim();
+    var stuId = String(body.studentId || '').trim();
+    var stuName = String(body.studentName || '').trim();
+    var date = String(body.date || '').trim();
+    var b64 = String(body.receiptImage || '').trim();
+    if (!payId || !b64) return corsOutput({ success: false, error: 'Missing payId or receiptImage' });
+    saveReceiptImage(payId, stuId, stuName, date, b64);
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      var idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      for (var r = 0; r < idValues.length; r++) {
+        if (String(idValues[r][0]).trim() === stuId) {
+          var paymentsCell = sheet.getRange(r + 2, COL.PAYMENTS_JSON + 1).getValue();
+          try {
+            var plist = JSON.parse(String(paymentsCell || '[]'));
+            var modified = false;
+            for (var k = 0; k < plist.length; k++) {
+              if (String(plist[k].id).trim() === payId) {
+                plist[k].hasReceipt = true;
+                plist[k].receiptUrl = SCRIPT_WEBAPP_URL + '?action=view_receipt&id=' + encodeURIComponent(payId);
+                modified = true;
+                break;
+              }
+            }
+            if (modified) {
+              sheet.getRange(r + 2, COL.PAYMENTS_JSON + 1).setValue(JSON.stringify(plist));
+              var viewUrl = SCRIPT_WEBAPP_URL + '?action=view_receipt&id=' + encodeURIComponent(payId);
+              sheet.getRange(r + 2, COL.RECEIPT_IMAGE + 1).setValue('=HYPERLINK("' + viewUrl + '", "🖼️ عرض الوصل")');
+            }
+          } catch (e) {}
+          break;
+        }
+      }
+    }
+    return corsOutput({ success: true, payId: payId });
   }
 
   // SAVE / UPDATE
