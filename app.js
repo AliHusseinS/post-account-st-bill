@@ -501,7 +501,7 @@ function setupLoginScreen() {
   $('loginBtn').addEventListener('click', async () => {
     const password = $('passwordInput').value.trim();
     if (!selectedRole) {
-      showToast('اختر الدور أولاً', 'warning');
+      showToast('اختر القسم أولاً', 'warning');
       return;
     }
     if (!password) {
@@ -855,7 +855,7 @@ function clearStudentDetail() {
   panel.innerHTML = `
     <div class="flex items-center justify-center h-full text-gray-400 text-lg">
       <div class="text-center">
-        <div class="text-5xl mb-4">👈</div>
+        <div class="text-5xl mb-4">---></div>
         <div>اختر طالباً من القائمة لعرض تفاصيله</div>
       </div>
     </div>
