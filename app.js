@@ -512,7 +512,7 @@ function setupLoginScreen() {
     const loginBtn = $('loginBtn');
     const originalText = loginBtn.textContent;
     loginBtn.disabled = true;
-    loginBtn.textContent = 'جاري التحقق... ⏳';
+    loginBtn.textContent = 'يتم تسجيل الدخول... ⏳';
 
     try {
       const url = `${SCRIPT_URL}?action=login&role=${encodeURIComponent(selectedRole)}&password=${encodeURIComponent(password)}`;
