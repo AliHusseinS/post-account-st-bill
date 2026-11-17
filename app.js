@@ -228,6 +228,63 @@ async function loadStudents() {
   }
 }
 
+async function saveStudentNoImage(student) {
+  // Save student to sheet — receipt images are NOT included (they are uploaded separately)
+  try {
+    const paymentsClean = (student.payments || []).map(p => ({
+      id:             p.id,
+      amount:         Number(p.amount) || 0,
+      date:           p.date || '',
+      auditor:        p.auditor || '',
+      hasReceipt:     Boolean(p.hasReceipt || p.receiptUrl),
+      receiptUrl:     p.receiptUrl     || '',
+      receiptViewUrl: p.receiptViewUrl || '',
+      receiptImage:   null  // never send base64 here
+    }));
+
+    const payload = {
+      action:          'save',
+      id:              student.id,
+      fullName:        student.fullName       || '',
+      expenseType:     student.expenseType    || '',
+      department:      student.department     || '',
+      studyType:       student.studyType      || '',
+      specialization:  student.specialization || '',
+      admissionYear:   student.admissionYear  || '',
+      graduationYear:  student.graduationYear || '',
+      totalFee:        Number(student.totalFee) || 0,
+      discountPercent: Number(student.discountPercent) || 0,
+      createdAt:       student.createdAt || new Date().toISOString(),
+      payments:        paymentsClean,
+      student: {
+        id:              student.id,
+        fullName:        student.fullName       || '',
+        expenseType:     student.expenseType    || '',
+        department:      student.department     || '',
+        studyType:       student.studyType      || '',
+        specialization:  student.specialization || '',
+        admissionYear:   student.admissionYear  || '',
+        graduationYear:  student.graduationYear || '',
+        totalFee:        Number(student.totalFee) || 0,
+        discountPercent: Number(student.discountPercent) || 0,
+        createdAt:       student.createdAt || new Date().toISOString(),
+        payments:        paymentsClean
+      }
+    };
+
+    await fetch(SCRIPT_URL, {
+      method:  'POST',
+      mode:    'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body:    JSON.stringify(payload)
+    });
+  } catch (err) {
+    console.warn('saveStudentNoImage POST error:', err);
+  }
+  // Sync from server after delay
+  setTimeout(loadStudents, SYNC_DELAY_MS);
+}
+
 async function saveStudent(student, newPayId = null) {
   // Optimistic update
   const idx = students.findIndex(s => s.id === student.id);
@@ -247,7 +304,7 @@ async function saveStudent(student, newPayId = null) {
     }
   });
 
-  // Send to sheet (no-cors for POST — we can't read the response, that's ok)
+  // Send to sheet — only send receiptImage for genuinely new unsaved payments
   try {
     const paymentsClean = (student.payments || []).map(p => {
       const isNew = Boolean(newPayId && p.id === newPayId);
@@ -341,23 +398,65 @@ async function addPaymentToStudent(studentId, payment) {
 
   const payId = genPayId();
   const hasImg = Boolean(payment.receiptImage);
+  const viewUrl = hasImg ? `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(payId)}` : '';
+
   const newPayment = {
     id:             payId,
     amount:         Number(payment.amount) || 0,
     date:           payment.date || todayISO(),
     auditor:        payment.auditor || '',
-    receiptImage:   payment.receiptImage || null,
+    receiptImage:   hasImg ? payment.receiptImage : null,
     hasReceipt:     hasImg,
-    receiptUrl:     hasImg ? `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(payId)}` : '',
-    receiptViewUrl: hasImg ? `${SCRIPT_URL}?action=view_receipt&id=${encodeURIComponent(payId)}` : ''
+    receiptUrl:     viewUrl,
+    receiptViewUrl: viewUrl
   };
 
+  // 1. Store in localStorage immediately
   if (hasImg) {
     storeReceiptImage(studentId, payId, payment.receiptImage);
   }
 
   const updated = { ...student, payments: [...(student.payments || []), newPayment] };
-  await saveStudent(updated, payId);
+
+  // 2. Upload receipt image FIRST via dedicated endpoint (before saving student)
+  if (hasImg) {
+    try {
+      const receiptPayload = {
+        action:       'upload_receipt',
+        payId:        payId,
+        studentId:    studentId,
+        studentName:  student.fullName || '',
+        date:         newPayment.date  || '',
+        receiptImage: payment.receiptImage
+      };
+      await fetch(SCRIPT_URL, {
+        method:  'POST',
+        mode:    'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body:    JSON.stringify(receiptPayload)
+      });
+      // Give the server time to process the receipt before saving student row
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (err) {
+      console.warn('Receipt upload error (image saved locally):', err);
+    }
+  }
+
+  // 3. Save student WITHOUT the receiptImage base64 (it was already uploaded above)
+  const paymentForSheet = {
+    ...newPayment,
+    receiptImage: null  // don't re-send base64 in the student row
+  };
+  const updatedForSheet = { ...student, payments: [...(student.payments || []), paymentForSheet] };
+
+  // Update local state with the full image for display
+  const idx = students.findIndex(s => s.id === student.id);
+  if (idx >= 0) students[idx] = { ...updated };
+  else students.push({ ...updated });
+  renderCurrentView();
+  renderStats();
+
+  await saveStudentNoImage(updatedForSheet);
   showToast('تمت إضافة الدفعة بنجاح', 'success');
 }
 
@@ -895,15 +994,21 @@ function renderStudentDetail(id) {
                     <td class="py-2 px-3 font-semibold text-green-700">${fmt(p.amount)}</td>
                     <td class="py-2 px-3">${escHtml(p.auditor)}</td>
                     <td class="py-2 px-3 text-center">
-                      ${(p.receiptImage || p.receiptUrl || p.hasReceipt)
-                        ? `<button onclick="viewReceipt('${escHtml(p.id)}')"
-                             class="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg hover:bg-blue-100 inline-flex items-center gap-1 mx-auto font-medium transition">
-                             <span>🖼️</span> عرض
-                           </button>`
-                        : `<label class="text-xs bg-teal-50 text-teal-700 hover:bg-teal-100 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 mx-auto font-medium cursor-pointer transition" title="إرفاق صورة الوصل لهذه الدفعة">
-                             <span>📎</span> إرفاق وصل
-                             <input type="file" accept="image/*" class="hidden" onchange="attachReceiptToPayment('${escHtml(student.id)}', '${escHtml(p.id)}', this)">
-                           </label>`
+                      ${p.receiptImage
+                        ? `<div class="inline-flex items-center gap-1 justify-center">
+                            <button onclick="viewReceipt('${escHtml(p.id)}')"
+                              class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 font-medium transition" title="عرض صورة الوصل">
+                              <span>🖼️</span> عرض
+                            </button>
+                            <label class="text-xs bg-gray-100 text-gray-600 hover:bg-gray-200 px-1.5 py-1 rounded-lg inline-flex items-center cursor-pointer transition" title="استبدال / إعادة رفع صورة الوصل">
+                              <span>🔄</span>
+                              <input type="file" accept="image/*" class="hidden" onchange="attachReceiptToPayment('${escHtml(student.id)}', '${escHtml(p.id)}', this)">
+                            </label>
+                          </div>`
+                        : `<label class="text-xs bg-teal-50 text-teal-700 hover:bg-teal-100 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 mx-auto font-medium cursor-pointer transition shadow-sm border border-teal-200" title="إرفاق صورة الوصل لهذه الدفعة">
+                            <span>📎</span> إرفاق وصل
+                            <input type="file" accept="image/*" class="hidden" onchange="attachReceiptToPayment('${escHtml(student.id)}', '${escHtml(p.id)}', this)">
+                          </label>`
                       }
                     </td>
                     <td class="py-2 px-3 text-center">
@@ -1089,12 +1194,14 @@ async function viewReceipt(paymentId) {
   const modal = $('receiptModal');
   const modalImg = $('receiptModalImg');
   const modalLoading = $('receiptModalLoading');
+  const modalEmpty = $('receiptModalEmpty');
   const studentEl = $('receiptModalStudent');
   const amountEl = $('receiptModalAmount');
   const dateEl = $('receiptModalDate');
   const auditorEl = $('receiptModalAuditor');
 
   if (!modal) return;
+  if (modalEmpty) modalEmpty.classList.add('hidden');
 
   if (studentEl) studentEl.textContent = student.fullName || 'طالب';
   if (amountEl)  amountEl.textContent  = fmt(payment.amount);
@@ -1106,6 +1213,7 @@ async function viewReceipt(paymentId) {
   if (imgSrc && String(imgSrc).startsWith('data:image')) {
     payment.receiptImage = imgSrc;
     if (modalLoading) modalLoading.classList.add('hidden');
+    if (modalEmpty) modalEmpty.classList.add('hidden');
     if (modalImg) {
       modalImg.src = imgSrc;
       modalImg.classList.remove('hidden');
@@ -1113,6 +1221,7 @@ async function viewReceipt(paymentId) {
   } else {
     // Show spinner and fetch image from server
     if (modalImg) modalImg.classList.add('hidden');
+    if (modalEmpty) modalEmpty.classList.add('hidden');
     if (modalLoading) modalLoading.classList.remove('hidden');
 
     try {
@@ -1126,22 +1235,17 @@ async function viewReceipt(paymentId) {
           modalImg.classList.remove('hidden');
         }
         if (modalLoading) modalLoading.classList.add('hidden');
-      } else if (payment.receiptUrl) {
-        closeReceiptModal();
-        window.open(payment.receiptUrl, '_blank');
+        if (modalEmpty) modalEmpty.classList.add('hidden');
       } else {
         if (modalLoading) modalLoading.classList.add('hidden');
-        showToast('لم يتم العثور على صورة الوصل', 'warning');
+        if (modalImg) modalImg.classList.add('hidden');
+        if (modalEmpty) modalEmpty.classList.remove('hidden');
       }
     } catch (err) {
       console.warn('Fetch receipt error:', err);
       if (modalLoading) modalLoading.classList.add('hidden');
-      if (payment.receiptUrl) {
-        closeReceiptModal();
-        window.open(payment.receiptUrl, '_blank');
-      } else {
-        showToast('تعذر تحميل صورة الوصل', 'error');
-      }
+      if (modalImg) modalImg.classList.add('hidden');
+      if (modalEmpty) modalEmpty.classList.remove('hidden');
     }
   }
 }
@@ -1153,9 +1257,22 @@ function closeReceiptModal() {
   if (modalImg) modalImg.src = '';
   const modalLoading = $('receiptModalLoading');
   if (modalLoading) modalLoading.classList.add('hidden');
+  const modalEmpty = $('receiptModalEmpty');
+  if (modalEmpty) modalEmpty.classList.add('hidden');
   activeReceiptPayment = null;
   activeReceiptStudent = null;
 }
+
+async function uploadReceiptFromModal(input) {
+  if (!activeReceiptStudent || !activeReceiptPayment) return;
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const stuId = activeReceiptStudent.id;
+  const payId = activeReceiptPayment.id;
+  closeReceiptModal();
+  await attachReceiptToPayment(stuId, payId, input);
+}
+window.uploadReceiptFromModal = uploadReceiptFromModal;
 
 function printReceiptModal() {
   if (!activeReceiptStudent || !activeReceiptPayment) return;
@@ -1268,8 +1385,26 @@ async function exportStudentPDF(id) {
   }).join('');
 
   const receiptPages = payments
-    .filter(p => receiptImgs[p.id])
-    .map((p, i) => `
+    .map((p, i) => {
+      const img = receiptImgs[p.id];
+      if (!img) {
+        return `
+      <div class="receipt-page">
+        <div class="receipt-header">
+          <h3>معلومات الدفعة ${i + 1}</h3>
+          <div class="receipt-meta">
+            <span>الطالب: <strong>${student.fullName || ''}</strong></span>
+            <span>المبلغ: <strong>${Number(p.amount || 0).toLocaleString('ar-IQ')} د.ع</strong></span>
+            <span>التاريخ: <strong>${p.date || '-'}</strong></span>
+            <span>المدقق: <strong>${p.auditor || '-'}</strong></span>
+          </div>
+        </div>
+        <div class="receipt-img-wrap" style="padding: 40px; text-align: center; color: #94a3b8; background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; margin-top: 20px; font-weight: bold;">
+          ⚠️ لم يتم إرفاق صورة وصل لهذه الدفعة
+        </div>
+      </div>`;
+      }
+      return `
       <div class="receipt-page">
         <div class="receipt-header">
           <h3>معلومات الدفعة ${i + 1}</h3>
@@ -1281,9 +1416,10 @@ async function exportStudentPDF(id) {
           </div>
         </div>
         <div class="receipt-img-wrap">
-          <img src="${receiptImgs[p.id]}" alt="صورة الوصل ${i + 1}">
+          <img src="${img}" alt="صورة الوصل ${i + 1}">
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
   const statusColor = f.isPaid ? '#16a34a' : f.paidAmount > 0 ? '#d97706' : '#dc2626';
 
@@ -1291,7 +1427,7 @@ async function exportStudentPDF(id) {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>وصل  — ${student.fullName || student.id}</title>
+  <title>وصل مالي — ${student.fullName || student.id}</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;700;800&display=swap');
 

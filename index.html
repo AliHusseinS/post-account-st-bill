@@ -91,7 +91,7 @@
     </div>
 
     <!-- Role Selection -->
-    <p class="text-sm font-semibold text-gray-600 mb-3 text-center"></p>
+    <p class="text-sm font-semibold text-gray-600 mb-3 text-center">اختر الدور</p>
     <div class="grid grid-cols-2 gap-3 mb-5">
       <button data-role="postgrad"
         class="role-btn flex flex-col items-center gap-2 border-2 border-gray-200 rounded-2xl p-4
@@ -423,7 +423,7 @@
       <div class="flex items-center gap-2">
         <span class="text-xl">🧾</span>
         <div>
-          <h2 class="text-base font-bold text-gray-800">وصل تسديد </h2>
+          <h2 class="text-base font-bold text-gray-800">وصل تسديد رسمي</h2>
           <p class="text-xs text-teal-600 font-semibold">كلية التخطيط العمراني / الدراسات العليا / المتابعة المالية</p>
         </div>
       </div>
@@ -466,6 +466,15 @@
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
         </svg>
         <span class="font-medium text-sm">جاري تحميل صورة الوصل...</span>
+      </div>
+      <div id="receiptModalEmpty" class="hidden text-center py-10 px-4">
+        <div class="text-4xl mb-3">⚠️</div>
+        <h4 class="font-bold text-gray-800 text-base mb-1">لم يتم العثور على صورة الوصل</h4>
+        <p class="text-xs text-gray-500 mb-4">قد تكون الدفعة سُجلت بدون صورة أو لم تكتمل المزامنة.</p>
+        <label class="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition shadow-sm">
+          <span>📎</span> إرفاق صورة الوصل الآن
+          <input type="file" accept="image/*" class="hidden" onchange="uploadReceiptFromModal(this)">
+        </label>
       </div>
     </div>
 
