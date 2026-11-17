@@ -955,7 +955,7 @@ function renderStudentDetail(id) {
             <img id="receiptPreviewImg" class="w-14 h-14 object-cover rounded-lg border border-teal-300" src="" alt="صورة الوصل">
             <div class="flex-1 text-xs">
               <div class="font-bold text-teal-800">✅ تم اختيار صورة الوصل بنجاح</div>
-              <div class="text-teal-600">سيتم حفظ الصورة مع الدفعة في ملف الـ Sheet</div>
+              <div class="text-teal-600"></div>
             </div>
             <button type="button" onclick="cancelReceiptUpload()" class="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1 rounded-lg transition font-medium">إلغاء</button>
           </div>
