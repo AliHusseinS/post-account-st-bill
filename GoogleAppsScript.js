@@ -74,10 +74,20 @@ function getSheet() {
 function getReceiptsSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Receipts');
+  var headers = ['معرف الدفعة', 'معرف الطالب', 'اسم الطالب', 'تاريخ الوصل', 'صورة الوصل (Base64 Chunk)', 'رقم الجزء', 'إجمالي الأجزاء', 'تاريخ التخزين'];
   if (!sheet) {
     sheet = ss.insertSheet('Receipts');
-    sheet.getRange(1, 1, 1, 8).setValues([['معرف الدفعة', 'معرف الطالب', 'اسم الطالب', 'تاريخ الوصل', 'صورة الوصل (Base64 Chunk)', 'رقم الجزء', 'إجمالي الأجزاء', 'تاريخ التخزين']]);
-    sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#0d9488').setFontColor('#ffffff');
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#0d9488').setFontColor('#ffffff');
+  } else {
+    try {
+      var maxCols = sheet.getMaxColumns();
+      if (maxCols < headers.length) {
+        sheet.insertColumnsAfter(maxCols, headers.length - maxCols);
+      }
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#0d9488').setFontColor('#ffffff');
+    } catch (e) {}
   }
   return sheet;
 }
@@ -144,6 +154,10 @@ function saveReceiptImage(payId, stuId, stuName, date, base64) {
     }
 
     if (rowsToAppend.length > 0) {
+      var maxCols = sheet.getMaxColumns();
+      if (maxCols < 8) {
+        sheet.insertColumnsAfter(maxCols, 8 - maxCols);
+      }
       var lastRow = sheet.getLastRow();
       sheet.getRange(lastRow + 1, 1, rowsToAppend.length, 8).setValues(rowsToAppend);
     }
@@ -546,6 +560,13 @@ function doGet(e) {
     return corsOutput({ success: deleted, message: deleted ? ('Deleted: ' + deleteId) : ('Not found: ' + deleteId) });
   }
 
+  // 2b. DELETE RECEIPT via GET
+  if (action === 'delete_receipt') {
+    var delPayId = String(params.id || '').trim();
+    if (delPayId) deleteReceiptImage(delPayId);
+    return corsOutput({ success: true, deleted: delPayId });
+  }
+
   // 3. DEFAULT: return all students with receipt images merged
   var lastRow = sheet.getLastRow();
   if (lastRow <= 1) return corsOutput([]);
@@ -616,6 +637,13 @@ function doPost(e) {
       }
     }
     return corsOutput({ success: deleted, message: deleted ? 'Deleted' : 'Not found' });
+  }
+
+  // DELETE RECEIPT
+  if (action === 'delete_receipt') {
+    var delPayId = String(body.payId || body.id || '').trim();
+    if (delPayId) deleteReceiptImage(delPayId);
+    return corsOutput({ success: true, deleted: delPayId });
   }
 
   // UPLOAD RECEIPT DIRECTLY

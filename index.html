@@ -467,6 +467,15 @@
         </svg>
         <span class="font-medium text-sm">جاري تحميل صورة الوصل...</span>
       </div>
+      <div id="receiptModalEmpty" class="hidden text-center py-10 px-4">
+        <div class="text-4xl mb-3">⚠️</div>
+        <h4 class="font-bold text-gray-800 text-base mb-1">لم يتم العثور على صورة الوصل</h4>
+        <p class="text-xs text-gray-500 mb-4">قد تكون الدفعة سُجلت بدون صورة أو لم تكتمل المزامنة.</p>
+        <label class="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition shadow-sm">
+          <span>📎</span> إرفاق صورة الوصل الآن
+          <input type="file" accept="image/*" class="hidden" onchange="uploadReceiptFromModal(this)">
+        </label>
+      </div>
     </div>
 
     <!-- Modal Footer -->

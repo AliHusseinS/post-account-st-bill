@@ -66,9 +66,47 @@ def deploy_to_github(commit_msg):
         if push_res.returncode != 0:
             print("Git push error:", push_res.stderr)
             raise RuntimeError("Git push failed")
-        print("      ✅ تم الرفع على GitHub بنجاح.")
+        print("      ✅ تم الرفع على GitHub (فرع main) بنجاح.")
     else:
-        print("      ℹ️ لا توجد تعديلات جديدة لرفعها على GitHub.")
+        print("      ℹ️ لا توجد تعديلات جديدة لرفعها على main.")
+
+    # مزامنة فرع Load المباشر لـ GitHub Pages
+    sync_to_load_branch(commit_msg)
+    update_desktop_zip()
+
+def sync_to_load_branch(commit_msg):
+    print("\n      🔄 جاري مزامنة فرع Load (الموقع المباشر GitHub Pages)...")
+    try:
+        subprocess.run(["git", "fetch", "origin", "Load"], cwd=PROJECT_DIR, check=True)
+        subprocess.run(["git", "checkout", "Load"], cwd=PROJECT_DIR, check=True)
+        subprocess.run(["git", "pull", "--rebase", "origin", "Load"], cwd=PROJECT_DIR, check=True)
+        for f in ["app.js", "index.html", "GoogleAppsScript.js"]:
+            subprocess.run(["git", "checkout", "main", "--", f], cwd=PROJECT_DIR, check=True)
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=PROJECT_DIR, capture_output=True, text=True).stdout.strip()
+        if status:
+            subprocess.run(["git", "add", "app.js", "index.html", "GoogleAppsScript.js"], cwd=PROJECT_DIR, check=True)
+            subprocess.run(["git", "commit", "-m", f"sync: {commit_msg}"], cwd=PROJECT_DIR, check=True)
+            subprocess.run(["git", "push", "origin", "Load"], cwd=PROJECT_DIR, check=True)
+            print("      ✅ تم تحديث فرع Load على GitHub بنجاح.")
+        else:
+            print("      ℹ️ فرع Load متطابق بالفعل مع main.")
+    except Exception as e:
+        print(f"      ⚠️ ملاحظة أثناء مزامنة فرع Load: {e}")
+    finally:
+        subprocess.run(["git", "checkout", "main"], cwd=PROJECT_DIR, check=True)
+
+def update_desktop_zip():
+    import zipfile
+    desktop_zip = os.path.expanduser("~/Desktop/postgrad_tuition_system_latest.zip")
+    try:
+        with zipfile.ZipFile(desktop_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for fname in ["index.html", "app.js", "GoogleAppsScript.js", "README.md"]:
+                fpath = os.path.join(PROJECT_DIR, fname)
+                if os.path.exists(fpath):
+                    zf.write(fpath, fname)
+        print(f"      ✅ تم تحديث ملف الأرشيف على سطح المكتب بنجاح: {desktop_zip}")
+    except Exception as e:
+        print(f"      ⚠️ تعذر تحديث ملف zip على سطح المكتب: {e}")
 
 def deploy_to_apps_script(token):
     print("\n[2/4] 📤 جاري رفع كود Google Apps Script إلى المشروع المرتبط بالـ Sheet...")
